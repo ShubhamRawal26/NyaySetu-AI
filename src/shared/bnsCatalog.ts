@@ -315,20 +315,53 @@ export function detectSectionsFromText(input: string): StatutorySectionRecord[] 
 }
 
 export function findCatalogSection(bnsOrIpc: string): StatutorySectionRecord | undefined {
-  const clean = bnsOrIpc.toLowerCase().replace(/[^0-9a-z]/g, '');
-  return BNS_STATUTORY_CATALOG.find((item) => {
+  const normalized = bnsOrIpc.toLowerCase().trim();
+  if (!normalized) return undefined;
+
+  const isExplicitBns = /\bbns\b/i.test(normalized);
+  const isExplicitIpc = /\bipc\b/i.test(normalized);
+  const clean = normalized.replace(/[^0-9a-z]/g, '');
+
+  // Extract primary section number (e.g. "115" from "115(2) BNS", "304a" from "304-A IPC", "498a" from "498A")
+  const normalizedHyphen = normalized.replace(/(\d+)\s*-\s*([a-z])\b/gi, '$1$2');
+  const numMatch = normalizedHyphen.match(/\b(\d+[a-z]?)(?:\s*\(\s*(\d+[a-z]?)\s*\))?\b/i);
+  const queryBaseNum = numMatch?.[1]?.toLowerCase() ?? '';
+  const querySubNum = numMatch?.[2]?.toLowerCase() ?? '';
+
+  // Pass 1: exact normalized match or exact base+sub match
+  const exactHit = BNS_STATUTORY_CATALOG.find((item) => {
     const bnsClean = item.bnsSection.toLowerCase().replace(/[^0-9a-z]/g, '');
     const ipcClean = item.ipcSection.toLowerCase().replace(/[^0-9a-z]/g, '');
-    const bnsNum = item.bnsSection.match(/\d+/)?.[0] ?? '';
-    const ipcNum = item.ipcSection.match(/\d+[a-z]?/i)?.[0]?.toLowerCase() ?? '';
-    return (
-      bnsClean === clean ||
-      ipcClean === clean ||
-      (bnsNum && clean.includes(bnsNum) && clean.includes('bns')) ||
-      (ipcNum && clean.includes(ipcNum) && clean.includes('ipc')) ||
-      clean === bnsNum ||
-      clean === ipcNum
-    );
+    const bnsCompact = item.bnsSection.toLowerCase().replace(/\bbns\b/g, '').replace(/[^0-9a-z]/g, '');
+    const ipcCompact = item.ipcSection.toLowerCase().replace(/\bipc\b/g, '').replace(/[^0-9a-z]/g, '');
+
+    if (clean === bnsClean || clean === ipcClean) return true;
+    if (!isExplicitIpc && clean === bnsCompact) return true;
+    if (!isExplicitBns && clean === ipcCompact) return true;
+    return false;
+  });
+  if (exactHit) return exactHit;
+
+  // Pass 2: exact base section number match (respecting explicit BNS vs IPC qualifier)
+  if (!queryBaseNum) return undefined;
+  return BNS_STATUTORY_CATALOG.find((item) => {
+    const bnsNumMatch = item.bnsSection.match(/\b(\d+[a-z]?)(?:\s*\(\s*(\d+[a-z]?)\s*\))?\b/i);
+    const ipcNumMatch = item.ipcSection.match(/\b(\d+[a-z]?)(?:\s*\(\s*(\d+[a-z]?)\s*\))?\b/i);
+    const bnsBase = bnsNumMatch?.[1]?.toLowerCase() ?? '';
+    const bnsSub = bnsNumMatch?.[2]?.toLowerCase() ?? '';
+    const ipcBase = ipcNumMatch?.[1]?.toLowerCase() ?? '';
+    const ipcSub = ipcNumMatch?.[2]?.toLowerCase() ?? '';
+
+    const matchesBns =
+      !isExplicitIpc &&
+      bnsBase === queryBaseNum &&
+      (!querySubNum || !bnsSub || querySubNum === bnsSub);
+    const matchesIpc =
+      !isExplicitBns &&
+      ipcBase === queryBaseNum &&
+      (!querySubNum || !ipcSub || querySubNum === ipcSub);
+
+    return matchesBns || matchesIpc;
   });
 }
 

@@ -181,14 +181,14 @@ function validateUploadedDocument(
   return { ok: true, data: stripped, mimeType };
 }
 
-function getGeminiClient(apiVersion = 'v1beta'): GoogleGenAI {
+function getGeminiClient(apiVersion?: string): GoogleGenAI {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error('GEMINI_API_KEY_MISSING');
   }
   return new GoogleGenAI({
     apiKey,
-    apiVersion,
+    ...(apiVersion ? { apiVersion } : {}),
     httpOptions: {
       timeout: REQUEST_TIMEOUT_MS,
       headers: {
@@ -593,6 +593,60 @@ function normalizeAdvisoryPayload(raw: Partial<LegalAdvisoryResponse>): LegalAdv
   };
 }
 
+function normalizeFirExtractionPayload(
+  raw: Partial<FIROCRExtractionResponse>
+): FIROCRExtractionResponse {
+  const sections = Array.isArray(raw.extracted_sections)
+    ? raw.extracted_sections.map((sec) => {
+        const catalogHit =
+          findCatalogSection(String(sec?.bns_section || '')) ||
+          findCatalogSection(String(sec?.ipc_section || ''));
+        if (catalogHit) {
+          return {
+            bns_section: catalogHit.bnsSection,
+            ipc_section: catalogHit.ipcSection,
+            title: catalogHit.title,
+            is_bailable: catalogHit.isBailable,
+            max_punishment: catalogHit.maxPunishmentLabel,
+            is_compoundable: catalogHit.isCompoundable,
+          };
+        }
+        return {
+          bns_section: String(sec?.bns_section || 'Pending Verification'),
+          ipc_section: String(sec?.ipc_section || 'N/A'),
+          title: String(sec?.title || 'Alleged Offence'),
+          is_bailable: Boolean(sec?.is_bailable),
+          max_punishment: String(sec?.max_punishment || 'As per statute'),
+          is_compoundable: Boolean(sec?.is_compoundable),
+        };
+      })
+    : [];
+
+  const isOverallBailable =
+    sections.length > 0
+      ? sections.every((s) => s.is_bailable)
+      : Boolean(raw.is_overall_bailable);
+
+  return {
+    fir_number: String(raw.fir_number || 'Not clear'),
+    police_station: String(raw.police_station || 'Not clear'),
+    date_of_incident: String(raw.date_of_incident || 'Not clear'),
+    complainant_name: String(raw.complainant_name || 'Not clear'),
+    accused_name: String(raw.accused_name || 'Unknown'),
+    brief_allegation: String(
+      raw.brief_allegation ||
+        'Please verify the handwritten allegation directly against the official police station FIR copy.'
+    ),
+    extracted_sections: sections,
+    is_overall_bailable: isOverallBailable,
+    petty_theft_community_service_flag: Boolean(raw.petty_theft_community_service_flag),
+    recommended_immediate_action: String(
+      raw.recommended_immediate_action ||
+        'Confirm the cited sections with a lawyer or call NALSA Free Legal Aid Helpline 15100.'
+    ),
+  };
+}
+
 function createApp() {
   const app = express();
   app.disable('x-powered-by');
@@ -893,29 +947,13 @@ function createApp() {
         throw new Error('Empty OCR response from Gemini vision engine.');
       }
 
-      const parsed = JSON.parse(rawText) as FIROCRExtractionResponse;
-
-      // Cross-verify extracted sections against deterministic BNS catalog
-      if (Array.isArray(parsed.extracted_sections)) {
-        parsed.extracted_sections = parsed.extracted_sections.map((sec) => {
-          const catalogHit =
-            findCatalogSection(sec.bns_section) || findCatalogSection(sec.ipc_section);
-          if (!catalogHit) return sec;
-          return {
-            bns_section: catalogHit.bnsSection,
-            ipc_section: catalogHit.ipcSection,
-            title: catalogHit.title,
-            is_bailable: catalogHit.isBailable,
-            max_punishment: catalogHit.maxPunishmentLabel,
-            is_compoundable: catalogHit.isCompoundable,
-          };
-        });
-        if (parsed.extracted_sections.length > 0) {
-          parsed.is_overall_bailable = parsed.extracted_sections.every(
-            (s) => s.is_bailable
-          );
-        }
-      }
+      const cleanedJson = rawText
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
+      const parsed = normalizeFirExtractionPayload(
+        JSON.parse(cleanedJson) as Partial<FIROCRExtractionResponse>
+      );
 
       res.json({ extraction: parsed });
     } catch (err) {
@@ -1066,6 +1104,11 @@ Draft the formal petition clearly so the accused's family or a DLSA Legal Aid Co
       const formatted = formatApiError(err);
       res.status(formatted.status).json({ error: formatted.message });
     }
+  });
+
+  // Return proper JSON 404 for unknown /api/* endpoints instead of falling through to SPA HTML
+  app.use('/api', (_req, res) => {
+    res.status(404).json({ error: 'API endpoint not found.' });
   });
 
   // Catch-all JSON error handler for malformed JSON bodies or oversized payloads

@@ -81,7 +81,15 @@ export const BailEnginePanel: React.FC<BailEnginePanelProps> = ({
     [selectedSectionId]
   );
 
-  const undergoneDays = Math.max(0, Math.round(custodyMonths * 30.4375));
+  useEffect(() => {
+    setCustodyMonths((prev) => Math.min(prev, selectedRecord.maxPunishmentMonths));
+  }, [selectedRecord.maxPunishmentMonths]);
+
+  const effectiveCustodyMonths = Math.min(
+    custodyMonths,
+    selectedRecord.maxPunishmentMonths
+  );
+  const undergoneDays = Math.max(0, Math.round(effectiveCustodyMonths * 30.4375));
 
   const calculation = useMemo(
     () =>
@@ -119,10 +127,12 @@ export const BailEnginePanel: React.FC<BailEnginePanelProps> = ({
         }),
       });
 
-      const data = (await res.json()) as {
-        dossier_text?: string;
-        error?: string;
-      };
+      let data: { dossier_text?: string; error?: string } = {};
+      try {
+        data = (await res.json()) as { dossier_text?: string; error?: string };
+      } catch {
+        throw new Error('Server returned an unexpected response. Please try again.');
+      }
 
       if (!res.ok || !data.dossier_text) {
         throw new Error(data.error || 'Could not draft bail letter.');
@@ -141,11 +151,30 @@ export const BailEnginePanel: React.FC<BailEnginePanelProps> = ({
   const handleCopy = async () => {
     if (!dossierText) return;
     try {
-      await navigator.clipboard.writeText(dossierText);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(dossierText);
+      } else {
+        throw new Error('Clipboard API unavailable');
+      }
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      setError('Could not copy text.');
+      try {
+        const tempArea = document.createElement('textarea');
+        tempArea.value = dossierText;
+        tempArea.setAttribute('readonly', '');
+        tempArea.style.position = 'fixed';
+        tempArea.style.opacity = '0';
+        document.body.appendChild(tempArea);
+        tempArea.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(tempArea);
+        if (!ok) throw new Error('execCommand copy failed');
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch {
+        setError('Could not copy text. Please select and copy the letter manually.');
+      }
     }
   };
 
@@ -154,15 +183,15 @@ export const BailEnginePanel: React.FC<BailEnginePanelProps> = ({
   );
 
   return (
-    <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-start lg:gap-8">
       {/* Left Simple 3-Step Calculator */}
       <div className="no-print lg:col-span-5 space-y-5">
-        <div className="ink-card rounded-[24px] bg-[#F6F6E0] p-6 space-y-5">
+        <div className="ink-card rounded-[24px] bg-[#F6F6E0] p-6 sm:p-7 space-y-5">
           <div>
-            <h3 className="font-display text-lg font-bold text-[#1A1A1A]">
+            <h3 className="font-display text-lg font-bold leading-snug text-[#1A1A1A]">
               Check Bail Eligibility
             </h3>
-            <p className="mt-1 text-xs text-[#4A4A43]">
+            <p className="mt-1 text-xs sm:text-[13px] leading-relaxed text-[#4A4A43]">
               Under Section 479 BNSS, first-time undertrials get mandatory bail
               after serving 1/3rd of the maximum jail term.
             </p>
@@ -180,7 +209,7 @@ export const BailEnginePanel: React.FC<BailEnginePanelProps> = ({
               id="bail-offence-select"
               value={selectedSectionId}
               onChange={(e) => setSelectedSectionId(e.target.value)}
-              className="mt-1.5 w-full rounded-xl border-2 border-[#1A1A1A] bg-[#FFFFEB] px-3.5 py-2.5 text-sm text-[#1A1A1A] focus:outline-none focus:ring-2 focus:ring-[#0041CA]"
+              className="mt-1.5 min-h-[44px] w-full rounded-xl border-2 border-[#1A1A1A] bg-[#FFFFEB] px-3.5 py-2.5 text-sm text-[#1A1A1A] focus:outline-none focus:ring-2 focus:ring-[#0041CA]"
             >
               {BNS_STATUTORY_CATALOG.map((item) => (
                 <option key={item.id} value={item.id}>
@@ -199,7 +228,7 @@ export const BailEnginePanel: React.FC<BailEnginePanelProps> = ({
               <button
                 type="button"
                 onClick={() => setIsFirstTimeOffender(true)}
-                className={`px-3 py-2 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                className={`min-h-[38px] px-3 py-2 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   isFirstTimeOffender
                     ? 'bg-[#1A1A1A] text-[#FFFFEB]'
                     : 'text-[#4A4A43] hover:text-[#1A1A1A]'
@@ -210,7 +239,7 @@ export const BailEnginePanel: React.FC<BailEnginePanelProps> = ({
               <button
                 type="button"
                 onClick={() => setIsFirstTimeOffender(false)}
-                className={`px-3 py-2 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                className={`min-h-[38px] px-3 py-2 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   !isFirstTimeOffender
                     ? 'bg-[#1A1A1A] text-[#FFFFEB]'
                     : 'text-[#4A4A43] hover:text-[#1A1A1A]'
@@ -226,7 +255,7 @@ export const BailEnginePanel: React.FC<BailEnginePanelProps> = ({
             <div className="flex items-center justify-between text-xs font-semibold text-[#1A1A1A]">
               <label htmlFor="custody-months">3. Months already in jail</label>
               <span className="font-mono text-sm font-bold text-[#034F46] tabular-nums">
-                {custodyMonths} months
+                {effectiveCustodyMonths} months
               </span>
             </div>
             <input
@@ -234,10 +263,14 @@ export const BailEnginePanel: React.FC<BailEnginePanelProps> = ({
               type="range"
               min={0}
               max={selectedRecord.maxPunishmentMonths}
-              value={Math.min(custodyMonths, selectedRecord.maxPunishmentMonths)}
+              value={effectiveCustodyMonths}
               onChange={(e) => setCustodyMonths(Number(e.target.value))}
               className="mt-2.5 w-full accent-[#034F46] cursor-pointer"
             />
+            <div className="mt-1 flex items-center justify-between font-mono text-[11px] text-[#4A4A43] tabular-nums">
+              <span>0 mo</span>
+              <span>{selectedRecord.maxPunishmentMonths} mo max</span>
+            </div>
           </div>
 
           {/* Collapsible Optional Court Details */}
@@ -245,13 +278,13 @@ export const BailEnginePanel: React.FC<BailEnginePanelProps> = ({
             <button
               type="button"
               onClick={() => setShowCourtFields((v) => !v)}
-              className="flex w-full items-center justify-between text-xs font-semibold text-[#4A4A43] hover:text-[#1A1A1A] cursor-pointer"
+              className="flex min-h-[36px] w-full items-center justify-between gap-2 text-xs font-semibold text-[#4A4A43] hover:text-[#1A1A1A] transition-colors cursor-pointer"
             >
               <span>Edit name &amp; FIR details for court letter (optional)</span>
               {showCourtFields ? (
-                <ChevronUp className="h-4 w-4" aria-hidden="true" />
+                <ChevronUp className="h-4 w-4 shrink-0" aria-hidden="true" />
               ) : (
-                <ChevronDown className="h-4 w-4" aria-hidden="true" />
+                <ChevronDown className="h-4 w-4 shrink-0" aria-hidden="true" />
               )}
             </button>
 
@@ -263,7 +296,7 @@ export const BailEnginePanel: React.FC<BailEnginePanelProps> = ({
                   onChange={(e) => setAccusedName(e.target.value)}
                   placeholder="Accused name"
                   aria-label="Accused name"
-                  className="rounded-xl border-2 border-[#1A1A1A] bg-[#FFFFEB] px-3 py-2 text-xs text-[#1A1A1A]"
+                  className="min-h-[40px] rounded-xl border-2 border-[#1A1A1A] bg-[#FFFFEB] px-3 py-2 text-xs text-[#1A1A1A]"
                 />
                 <input
                   type="text"
@@ -271,7 +304,7 @@ export const BailEnginePanel: React.FC<BailEnginePanelProps> = ({
                   onChange={(e) => setFirNumber(e.target.value)}
                   placeholder="FIR number"
                   aria-label="FIR number"
-                  className="rounded-xl border-2 border-[#1A1A1A] bg-[#FFFFEB] px-3 py-2 font-mono text-xs text-[#1A1A1A]"
+                  className="min-h-[40px] rounded-xl border-2 border-[#1A1A1A] bg-[#FFFFEB] px-3 py-2 font-mono text-xs text-[#1A1A1A]"
                 />
                 <input
                   type="text"
@@ -279,7 +312,7 @@ export const BailEnginePanel: React.FC<BailEnginePanelProps> = ({
                   onChange={(e) => setPoliceStation(e.target.value)}
                   placeholder="Police station"
                   aria-label="Police station"
-                  className="rounded-xl border-2 border-[#1A1A1A] bg-[#FFFFEB] px-3 py-2 text-xs text-[#1A1A1A]"
+                  className="min-h-[40px] rounded-xl border-2 border-[#1A1A1A] bg-[#FFFFEB] px-3 py-2 text-xs text-[#1A1A1A]"
                 />
                 <input
                   type="text"
@@ -287,7 +320,7 @@ export const BailEnginePanel: React.FC<BailEnginePanelProps> = ({
                   onChange={(e) => setDistrict(e.target.value)}
                   placeholder="District"
                   aria-label="District"
-                  className="rounded-xl border-2 border-[#1A1A1A] bg-[#FFFFEB] px-3 py-2 text-xs text-[#1A1A1A]"
+                  className="min-h-[40px] rounded-xl border-2 border-[#1A1A1A] bg-[#FFFFEB] px-3 py-2 text-xs text-[#1A1A1A]"
                 />
               </div>
             )}
@@ -297,7 +330,7 @@ export const BailEnginePanel: React.FC<BailEnginePanelProps> = ({
             type="button"
             onClick={handleGenerateDossier}
             disabled={loading}
-            className="btn-cobalt w-full inline-flex items-center justify-center gap-2 px-5 py-3 text-sm font-semibold rounded-xl disabled:opacity-50 whitespace-nowrap cursor-pointer"
+            className="btn-cobalt w-full min-h-[46px] inline-flex items-center justify-center gap-2 px-5 py-3 text-sm font-semibold rounded-xl disabled:opacity-50 whitespace-nowrap cursor-pointer"
           >
             {loading ? (
               <>
@@ -315,7 +348,7 @@ export const BailEnginePanel: React.FC<BailEnginePanelProps> = ({
           {error && (
             <div
               role="alert"
-              className="flex items-start gap-2 rounded-xl border-2 border-[#1A1A1A] bg-[#FFBCF2]/50 p-3 text-xs font-medium text-[#1A1A1A]"
+              className="flex items-start gap-2.5 rounded-xl border-2 border-[#1A1A1A] bg-[#FFBCF2]/50 p-3.5 text-xs leading-relaxed font-medium text-[#1A1A1A]"
             >
               <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" aria-hidden="true" />
               <span>{error}</span>
@@ -326,9 +359,9 @@ export const BailEnginePanel: React.FC<BailEnginePanelProps> = ({
 
       {/* Right Forest-Green Live Eligibility Card + Printable Bail Letter */}
       <div className="lg:col-span-7 space-y-6">
-        <div className="no-print rounded-[26px] bg-[#034F46] text-[#FFFFEB] p-7 space-y-6">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#FFFFEB]/15 pb-4">
-            <div className="flex items-center gap-2 text-sm sm:text-base font-bold">
+        <div className="no-print rounded-[24px] border-2 border-[#1A1A1A] bg-[#034F46] text-[#FFFFEB] p-6 sm:p-8 shadow-[4px_4px_0_#1A1A1A] space-y-6">
+          <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-[#FFFFEB]/15 pb-4">
+            <div className="flex items-center gap-2.5 text-sm sm:text-base font-bold">
               {calculation.excludedForDeathOrLife ? (
                 <>
                   <AlertTriangle
@@ -361,35 +394,35 @@ export const BailEnginePanel: React.FC<BailEnginePanelProps> = ({
                 </>
               )}
             </div>
-            <span className="font-mono text-xs text-[#F0D7FF] tabular-nums">
+            <span className="font-mono text-xs font-semibold text-[#F0D7FF] tabular-nums">
               {selectedRecord.bnsSection}
             </span>
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
-            <div className="rounded-2xl bg-[#FFFFEB]/10 p-4">
-              <div className="text-xs text-[#FFFFEB]/70">Max Jail</div>
-              <div className="mt-1 font-display text-2xl font-bold text-[#FFFFEB] tabular-nums">
+          <div className="grid grid-cols-3 gap-3 sm:gap-4">
+            <div className="rounded-2xl bg-[#FFFFEB]/10 p-3.5 sm:p-4">
+              <div className="text-xs text-[#FFFFEB]/75">Max Jail</div>
+              <div className="mt-1 font-display text-xl sm:text-2xl font-bold text-[#FFFFEB] tabular-nums">
                 {calculation.maxPunishmentMonths} mo
               </div>
             </div>
-            <div className="rounded-2xl bg-[#FFFFEB]/10 p-4">
-              <div className="text-xs text-[#FFFFEB]/70">Bail After</div>
-              <div className="mt-1 font-display text-2xl font-bold text-[#F0D7FF] tabular-nums">
+            <div className="rounded-2xl bg-[#FFFFEB]/10 p-3.5 sm:p-4">
+              <div className="text-xs text-[#FFFFEB]/75">Bail After</div>
+              <div className="mt-1 font-display text-xl sm:text-2xl font-bold text-[#F0D7FF] tabular-nums">
                 {calculation.thresholdMonthsRounded} mo
               </div>
             </div>
-            <div className="rounded-2xl bg-[#FFFFEB]/10 p-4">
-              <div className="text-xs text-[#FFFFEB]/70">Served</div>
-              <div className="mt-1 font-display text-2xl font-bold text-[#FFA946] tabular-nums">
+            <div className="rounded-2xl bg-[#FFFFEB]/10 p-3.5 sm:p-4">
+              <div className="text-xs text-[#FFFFEB]/75">Served</div>
+              <div className="mt-1 font-display text-xl sm:text-2xl font-bold text-[#FFA946] tabular-nums">
                 {calculation.undergoneMonthsRounded} mo
               </div>
             </div>
           </div>
 
           {/* Waveform Progress Visual */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-xs text-[#FFFFEB]/80">
+          <div className="space-y-2.5 pt-1">
+            <div className="flex items-center justify-between text-xs sm:text-[13px] text-[#FFFFEB]/85">
               <span>Bail Threshold Progress</span>
               <span className="font-mono font-bold text-[#F0D7FF] tabular-nums">
                 {calculation.percentOfThreshold}%
@@ -430,7 +463,7 @@ export const BailEnginePanel: React.FC<BailEnginePanelProps> = ({
 
         {/* Printable Court Bail Letter */}
         {dossierText && (
-          <div className="print-only-dossier ink-card rounded-[26px] bg-[#FFFFEB] p-6 sm:p-7">
+          <div className="print-only-dossier ink-card rounded-[24px] bg-[#FFFFEB] p-6 sm:p-7">
             <div className="no-print flex flex-wrap items-center justify-between gap-3 border-b border-[#E4E4D0] pb-4">
               <h4 className="font-display text-base font-bold text-[#1A1A1A]">
                 Ready-to-Print Court Bail Letter
@@ -439,7 +472,7 @@ export const BailEnginePanel: React.FC<BailEnginePanelProps> = ({
                 <button
                   type="button"
                   onClick={handleCopy}
-                  className="btn-cream inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap shrink-0 cursor-pointer"
+                  className="btn-cream inline-flex min-h-[36px] items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-xl whitespace-nowrap shrink-0 cursor-pointer"
                 >
                   <Copy className="h-3.5 w-3.5" aria-hidden="true" />
                   <span>{copied ? 'Copied' : 'Copy'}</span>
@@ -447,7 +480,7 @@ export const BailEnginePanel: React.FC<BailEnginePanelProps> = ({
                 <button
                   type="button"
                   onClick={() => window.print()}
-                  className="btn-cobalt inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap shrink-0 cursor-pointer"
+                  className="btn-cobalt inline-flex min-h-[36px] items-center gap-1.5 px-4 py-1.5 text-xs font-semibold rounded-xl whitespace-nowrap shrink-0 cursor-pointer"
                 >
                   <Printer className="h-3.5 w-3.5" aria-hidden="true" />
                   <span>Print</span>
@@ -455,7 +488,7 @@ export const BailEnginePanel: React.FC<BailEnginePanelProps> = ({
               </div>
             </div>
 
-            <pre className="mt-4 whitespace-pre-wrap break-words font-mono text-xs sm:text-[13px] leading-relaxed text-[#1A1A1A] bg-[#F6F6E0] p-5 rounded-2xl border-2 border-[#1A1A1A] print:bg-white print:text-black print:border-0 print:p-0">
+            <pre className="mt-4 max-h-[520px] overflow-y-auto whitespace-pre-wrap break-words font-mono text-xs sm:text-[13px] leading-relaxed text-[#1A1A1A] bg-[#F6F6E0] p-5 rounded-2xl border-2 border-[#1A1A1A] print:max-h-none print:overflow-visible print:bg-white print:text-black print:border-0 print:p-0">
               {dossierText}
             </pre>
           </div>

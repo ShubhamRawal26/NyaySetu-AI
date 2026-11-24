@@ -30,16 +30,41 @@
     background-color: var(--cream);
     color: var(--ink);
     font-family: var(--font-sans);
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
   h1, h2, h3, h4 {
     font-family: var(--font-display);
+    text-wrap: balance;
   }
 
   body {
     overflow-x: hidden;
     background-color: var(--cream);
     color: var(--ink);
+  }
+
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid var(--blue);
+    outline-offset: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
 
@@ -62,7 +87,7 @@
     radial-gradient(40% 50% at 10% 10%, #034f4659, transparent 70%),
     radial-gradient(80% 24% at 28% 72%, #034f468c, transparent 70%),
     #121211;
-  border-radius: 0 0 clamp(40px, 6vw, 96px) clamp(40px, 6vw, 96px);
+  border-radius: 0 0 clamp(32px, 5.5vw, 88px) clamp(32px, 5.5vw, 88px);
 }
 
 /* Tactile neo-editorial button & panel ink shadow */
@@ -94,11 +119,19 @@
   background-color: var(--cream);
   color: var(--ink);
   border: 2px solid var(--ink);
-  transition: background-color 150ms var(--ease), transform 150ms var(--ease);
+  box-shadow: 2px 2px 0 var(--ink);
+  transition: background-color 150ms var(--ease), transform 150ms var(--ease), box-shadow 150ms var(--ease);
 }
 
 .btn-cream:hover:not(:disabled) {
   background-color: var(--lav);
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0 var(--ink);
+}
+
+.btn-cream:active:not(:disabled) {
+  transform: translate(1px, 1px);
+  box-shadow: 1px 1px 0 var(--ink);
 }
 
 @media print {
