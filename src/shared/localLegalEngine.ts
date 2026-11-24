@@ -148,7 +148,40 @@ export function analyzeLegalQueryLocally(query: string): {
       (!anyExcluded && mentionsSec479 && /\b479\b/i.test(query))
   );
 
-  const detectedSections = matches.map((m) => ({
+  const qLower = normalizeIndicDigits(query).toLowerCase().trim();
+  const isGreetingOrSmallTalk =
+    /^(?:hi+|he+y+|hello+|hlo+|yo+|sup|namaste|namaskar|pranam|salaam|good\s*(?:morning|afternoon|evening|night)|how\s+are\s+you|how\s*r\s*u|kaise\s+ho|kya\s+haal|what'?s\s+up|thanks|thank\s+you|thx|dhanyawad|shukriya|ok|okay|bro|bhai|friend)(?:[\s,!?.]*(?:bro|bhai|sir|ji|friend|there|how\s+are\s+you|how\s*r\s*u|kaise\s+ho|kya\s+haal|what'?s\s+up|all\s+good|can\s+you\s+help(?:\s+me)?|please))*[\s,!?.]*$/i.test(
+      qLower
+    ) ||
+    /^(?:नमस्ते|नमस्कार|प्रणाम|हेलो|हाय|भाई|दोस्त|कैसे हो|कैसे हैं|क्या हाल है|क्या हाल|धन्यवाद|शुक्रिया)(?:[\s,!?.।]*(?:नमस्ते|नमस्कार|भाई|जी|दोस्त|कैसे हो|कैसे हैं|क्या हाल है|क्या हाल|सब ठीक))*[\s,!?.।]*$/i.test(
+      qLower
+    );
+
+  const isCapabilityQuestion =
+    /\b(?:who\s+are\s+you|what\s+can\s+you\s+do|how\s+does\s+this\s+work|help\s+me|what\s+is\s+nyayasetu)\b|आप कौन हैं|क्या कर सकते/i.test(
+      qLower
+    );
+
+  const isAnticipatoryBailQuery =
+    /\b(?:anticipatory\s+bail|before\s+arrest|false\s+(?:fir|case)|framed|threaten(?:ing)?\s+to\s+file\s+fir|438\s*crpc|482\s*bnss)\b|अग्रिम जमानत|झूठी\s*(?:एफआईआर|fir|केस)/i.test(
+      qLower
+    );
+
+  const isFirRefusalQuery =
+    /\b(?:refus(?:e|ing|ed)\s+(?:to\s+)?(?:file|write|register|lodge)\s+fir|not\s+(?:writing|registering|filing)\s+fir|zero\s+fir|how\s+to\s+file\s+(?:an?\s+)?fir)\b|एफआईआर\s*नहीं\s*लिख|fir\s*nahi\s*likh|जीरो एफआईआर/i.test(
+      qLower
+    );
+
+  const isArrestOrCustodyQuery =
+    /\b(?:arrest|arrested|police\s+took|thana|police\s+station|custody|lockup|detained|jail|bail|jamaanat|jmanat|fir|remand|warrant|magistrate|court|lawyer|vakil)\b|गिरफ्तार|पुलिस|थाने|जेल|जमानत|वकील|अरेस्ट|हिरासत/i.test(
+      qLower
+    );
+
+  const hasExplicitNumericSection = /\b\d{2,3}[a-z]?(?:\(\d+\))?\b/i.test(qLower);
+  const effectiveMatches =
+    isAnticipatoryBailQuery && !hasExplicitNumericSection ? [] : matches;
+
+  const detectedSections = effectiveMatches.map((m) => ({
     bns_section: m.bnsSection,
     ipc_section: m.ipcSection,
     title: m.title,
@@ -158,15 +191,14 @@ export function analyzeLegalQueryLocally(query: string): {
   }));
 
   const overallBailable =
-    matches.length > 0 ? matches.every((m) => m.isBailable) : true;
+    effectiveMatches.length > 0 ? effectiveMatches.every((m) => m.isBailable) : false;
 
   let summaryEn = '';
   let summaryHi = '';
   let actions: string[] = [];
   let spokenScript = '';
 
-  if (matches.length === 0) {
-    // General legal first-aid / custody query without a matched catalog section
+  if (effectiveMatches.length === 0) {
     if (sec479Calc && custodyMonths !== null) {
       if (sec479Calc.isEligible) {
         summaryEn = `Do not panic. Based on ${custodyMonths} months already spent in jail against a ${sec479Calc.maxPunishmentMonths}-month maximum sentence, a first-time undertrial qualifies for MANDATORY STATUTORY BAIL under Section 479 BNSS after serving 1/3rd (${sec479Calc.thresholdMonthsRounded} months). The Court must consider release on a personal bond, and you can also get a 100% free defense lawyer by calling NALSA Helpline 15100.`;
@@ -194,11 +226,53 @@ export function analyzeLegalQueryLocally(query: string): {
         spokenScript =
           'घबराएं नहीं। आप अभी धारा 480 बीएनएसएस के तहत नियमित जमानत की अर्जी लगा सकते हैं और एक-तिहाई समय पूरा होने पर अनिवार्य जमानत का अधिकार मिलेगा। मुफ्त वकील के लिए 15100 पर कॉल करें।';
       }
-    } else {
+    } else if (isGreetingOrSmallTalk || isCapabilityQuestion) {
       summaryEn =
-        'Stay calm—you have strong constitutional rights under BNSS 2023. Police must inform the arrested person and family of the exact FIR section and bail status (Section 47 & 48 BNSS), prepare a signed Arrest Memo (Section 36 BNSS), and produce the person before a Magistrate within 24 hours (Section 58 BNSS). Share the exact BNS/IPC section number (or upload a photo of the FIR in the Scan FIR tab) so we can check instant bail eligibility.';
+        "Hey! I'm doing well and ready to help. I am NyayaSetu, your Indian legal aid helper for BNS 2023, IPC 1860, and BNSS bail rights. Tell me what happened or mention a police section (like 323 IPC, 303 BNS, or 420 IPC), and I'll explain bail status and clear next steps in simple English or Hindi.";
       summaryHi =
-        'घबराएं बिल्कुल नहीं—भारतीय नागरिक सुरक्षा संहिता (BNSS 2023) आपको मजबूत कानूनी अधिकार देती है। पुलिस के लिए गिरफ्तारी का कारण व धारा बताना (धारा 47 BNSS), परिवार को सूचना देना (धारा 48 BNSS), अरेस्ट मेमो बनाना और 24 घंटे के भीतर मजिस्ट्रेट के सामने पेश करना अनिवार्य है। सटीक जमानत जांच के लिए कृपया FIR की धारा लिखें या ऊपर Scan FIR टैब में FIR की फोटो अपलोड करें।';
+        'नमस्ते! मैं बिल्कुल ठीक हूँ और आपकी मदद के लिए तैयार हूँ। मैं न्यायसेतु हूँ—भारतीय कानून (BNS 2023, IPC 1860 और BNSS जमानत नियमों) का सरल सहायक। कृपया अपनी कानूनी समस्या या पुलिस द्वारा लगाई गई धारा (जैसे 323 IPC, 303 BNS या 420 IPC) लिखें ताकि मैं तुरंत सही जानकारी दे सकूँ।';
+      actions = hasDevanagari
+        ? [
+            'बाईं ओर अपनी समस्या या FIR की धारा लिखें (जैसे "पड़ोसी से झगड़ा धारा 323" या "चोरी धारा 303")।',
+            'यदि आपके पास FIR की फोटो है, तो ऊपर "Scan FIR" टैब में अपलोड करके तुरंत धाराएं और जमानत स्थिति जानें।',
+            'जेल में बिताए समय के आधार पर अनिवार्य जमानत जांचने के लिए "Bail Check" टैब खोलें।',
+          ]
+        : [
+            'Type or speak your legal situation or police section on the left (e.g., "Section 323 IPC fight", "theft under Rs 5000", or "Section 420 cheating").',
+            'Have an FIR photo? Switch to the "Scan FIR" tab above to read the sections and bail status automatically.',
+            'Need to check 1/3rd mandatory bail or print a court letter? Open the "Bail Check" tab above.',
+          ];
+      spokenScript =
+        'नमस्ते! मैं न्यायसेतु हूँ और आपकी मदद के लिए तैयार हूँ। कृपया अपनी कानूनी समस्या या एफआईआर की धारा बताएं ताकि मैं जमानत और सही कदम समझा सकूँ।';
+    } else if (isAnticipatoryBailQuery) {
+      summaryEn =
+        'If you fear arrest in a false or non-bailable FIR, you can apply for Anticipatory Bail before arrest under Section 482 BNSS, 2023 (formerly Section 438 CrPC) before the Sessions Court or High Court. Also, for offences punishable up to 7 years, police must follow Section 35(3) BNSS (Arnesh Kumar notice rule) before arresting.';
+      summaryHi =
+        'यदि आपको किसी झूठी FIR या गैर-जमानती मामले में गिरफ्तारी का डर है, तो आप गिरफ्तारी से पहले धारा 482 BNSS, 2023 (पुरानी धारा 438 CrPC) के तहत सत्र न्यायालय (Sessions Court) या हाई कोर्ट में अग्रिम जमानत (Anticipatory Bail) की अर्जी लगा सकते हैं। साथ ही 7 वर्ष तक की सजा वाले मामलों में पुलिस को गिरफ्तारी से पहले धारा 35(3) BNSS का नोटिस देना अनिवार्य है।';
+      actions = [
+        'Gather proof of innocence (messages, call logs, CCTV, location proof, or prior written complaints) immediately.',
+        'Contact a defense advocate or call NALSA Free Legal Aid Helpline 15100 to file a Section 482 BNSS Anticipatory Bail petition in the Sessions Court.',
+        'If you receive a Section 35(3) BNSS police notice, cooperate with the inquiry in writing with a lawyer so police cannot justify arrest.',
+      ];
+      spokenScript =
+        'यदि आपको झूठे केस में गिरफ्तारी का डर है तो आप धारा 482 बीएनएसएस के तहत कोर्ट में अग्रिम जमानत की अर्जी लगा सकते हैं। मुफ्त कानूनी मदद के लिए 15100 पर कॉल करें।';
+    } else if (isFirRefusalQuery) {
+      summaryEn =
+        'Under Section 173 of BNSS, 2023, police cannot refuse to register an FIR for a cognizable offence—even if the incident happened outside their area, they must register a "Zero FIR" and transfer it. You can also file an e-FIR online or send a written complaint to the Superintendent of Police (SP) under Section 173(4) BNSS.';
+      summaryHi =
+        'धारा 173 BNSS, 2023 के तहत संज्ञेय अपराध (Cognizable Offence) में पुलिस FIR लिखने से मना नहीं कर सकती—घटना किसी भी क्षेत्र की हो, थाना "जीरो एफआईआर" (Zero FIR) दर्ज करने के लिए बाध्य है। यदि थाना मना करे, तो आप धारा 173(4) BNSS के तहत पुलिस अधीक्षक (SP) को लिखित शिकायत भेज सकते हैं।';
+      actions = [
+        'Submit a dated written complaint at the police station and ask for a stamped receiving copy (or file an online e-FIR on your State Police portal).',
+        'If the SHO refuses, send the written complaint by Registered Post to the Superintendent of Police (SP) / DCP under Section 173(4) BNSS.',
+        'If no action is taken, approach the Judicial Magistrate under Section 175(3) BNSS (with free help from NALSA 15100) for a court order directing FIR registration.',
+      ];
+      spokenScript =
+        'धारा 173 बीएनएसएस के तहत पुलिस संज्ञेय अपराध में एफआईआर लिखने से मना नहीं कर सकती और किसी भी थाने में जीरो एफआईआर दर्ज की जा सकती है। मदद के लिए 15100 पर कॉल करें।';
+    } else if (isArrestOrCustodyQuery) {
+      summaryEn =
+        'Stay calm—you have strong constitutional rights under BNSS 2023. Police must inform the arrested person and family of the exact FIR section and bail status (Sections 47 & 48 BNSS), prepare a signed Arrest Memo (Section 36 BNSS), and produce the person before a Magistrate within 24 hours (Section 58 BNSS). Share the exact BNS/IPC section number (or upload the FIR photo in Scan FIR) to check bail eligibility.';
+      summaryHi =
+        'घबराएं बिल्कुल नहीं—भारतीय नागरिक सुरक्षा संहिता (BNSS 2023) आपको मजबूत कानूनी अधिकार देती है। पुलिस के लिए गिरफ्तारी का कारण व धारा बताना (धारा 47 BNSS), परिवार को सूचना देना (धारा 48 BNSS), अरेस्ट मेमो बनाना और 24 घंटे के भीतर मजिस्ट्रेट के सामने पेश करना अनिवार्य है। सटीक जमानत जांच के लिए कृपया FIR की धारा लिखें या ऊपर Scan FIR टैब में फोटो अपलोड करें।';
       actions = hasDevanagari
         ? [
             'थाने से तुरंत FIR और अरेस्ट मेमो (धारा 36 व 47 BNSS) की कॉपी मांगें और उसमें लिखी BNS या IPC धारा नोट करें।',
@@ -212,6 +286,18 @@ export function analyzeLegalQueryLocally(query: string): {
           ];
       spokenScript =
         'घबराइए मत। पुलिस के लिए गिरफ्तारी की धारा बताना, परिवार को सूचना देना और 24 घंटे के अंदर मजिस्ट्रेट के सामने पेश करना अनिवार्य है। मुफ्त सरकारी वकील के लिए तुरंत 15100 पर कॉल करें।';
+    } else {
+      summaryEn =
+        'I am NyayaSetu, a focused Indian legal aid helper for BNS 2023, IPC 1860, FIR analysis, and BNSS bail rights. To give you an accurate answer, please describe the legal issue or mention a section number (for example: "neighbor fight 323 IPC", "theft under Rs 5000", "cheating 420", "anticipatory bail", or "police refusing FIR").';
+      summaryHi =
+        'मैं न्यायसेतु हूँ—भारतीय आपराधिक कानून (BNS 2023, IPC 1860), FIR जांच और जमानत अधिकारों का सहायक। सही कानूनी मदद के लिए कृपया अपनी समस्या या पुलिस धारा लिखें (जैसे: "पड़ोसी से झगड़ा धारा 323", "₹5,000 से कम चोरी", "धोखाधड़ी 420", या "अग्रिम जमानत")।';
+      actions = [
+        'Describe what happened along with any police section number (BNS or IPC) in simple English or Hindi.',
+        'Or tap one of the 4 quick examples on the left to see an instant legal breakdown.',
+        'For urgent live legal advice from a government lawyer, call NALSA Free Legal Aid Helpline 15100.',
+      ];
+      spokenScript =
+        'मैं न्यायसेतु कानूनी सहायक हूँ। सही जानकारी के लिए कृपया अपनी कानूनी समस्या या पुलिस द्वारा लगाई गई धारा बताएं, या मुफ्त सरकारी वकील के लिए 15100 पर कॉल करें।';
     }
   } else if (overallBailable) {
     const citationListEn = matches.map(formatDualCitation).join(' and ');

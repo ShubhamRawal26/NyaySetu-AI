@@ -426,7 +426,19 @@ export const LegalFirstAidPanel: React.FC<LegalFirstAidPanelProps> = ({
               {/* Bail Verdict + Listen Audio */}
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-[#FFFFEB]/15 pb-5">
                 <div className="flex items-center gap-2.5 text-sm sm:text-base font-bold">
-                  {advisory.overall_bailable ? (
+                  {advisory.detected_sections.length === 0 ? (
+                    <>
+                      <Scale
+                        className="h-5 w-5 text-[#F0D7FF] shrink-0"
+                        aria-hidden="true"
+                      />
+                      <span className="text-[#F0D7FF]">
+                        {advisory.statutory_bail_sec_479_applicable
+                          ? 'Section 479 BNSS Bail Guidance'
+                          : 'NyayaSetu Legal Helper'}
+                      </span>
+                    </>
+                  ) : advisory.overall_bailable ? (
                     <>
                       <CheckCircle2
                         className="h-5 w-5 text-[#34D399] shrink-0"
