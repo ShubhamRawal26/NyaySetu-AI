@@ -1,0 +1,6 @@
+{
+  "name": "NyayaSetu AI",
+  "description": "Citizen Legal First-Aid, Multimodal FIR Vision Scanner, and BNSS Section 479 Statutory Bail Engine for India.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

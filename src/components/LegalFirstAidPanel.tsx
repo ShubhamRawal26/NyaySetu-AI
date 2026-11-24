@@ -1,0 +1,562 @@
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  AlertTriangle,
+  ArrowRight,
+  CheckCircle2,
+  Loader2,
+  Mic,
+  MicOff,
+  PhoneCall,
+  Scale,
+  Send,
+  Volume2,
+  VolumeX,
+} from 'lucide-react';
+import type {
+  BailTransferPayload,
+  LegalAdvisoryResponse,
+} from '../types/legal';
+
+interface LegalFirstAidPanelProps {
+  onTransferToBail: (payload: BailTransferPayload) => void;
+  onOpenNalsa: () => void;
+  prefillQuery?: string | null;
+  onPrefillConsumed?: () => void;
+}
+
+interface SpeechRecognitionEventLike {
+  results: {
+    length: number;
+    [index: number]: {
+      isFinal: boolean;
+      [altIndex: number]: { transcript: string };
+    };
+  };
+}
+
+interface SpeechRecognitionLike {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: ((event: { error: string }) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+}
+
+const QUICK_EXAMPLES = [
+  {
+    label: 'Neighbor fight (Sec. 323 IPC / 115 BNS)',
+    query:
+      'My brother was taken to the police station after a neighbor fight under Section 323 IPC / 115(2) BNS. Can he get bail at the station?',
+  },
+  {
+    label: 'Small theft under ₹5,000 (Sec. 379 IPC / 303 BNS)',
+    query:
+      'My son was arrested for a first-time theft of a bicycle worth ₹3,500 under Section 303(2) BNS. Can he avoid jail?',
+  },
+  {
+    label: 'In jail over 1 year (First offence bail)',
+    query:
+      'My husband has been in jail for 14 months for his first offence under Section 379 IPC (max 3 years). Can he get bail under Section 479 BNSS?',
+  },
+];
+
+export const LegalFirstAidPanel: React.FC<LegalFirstAidPanelProps> = ({
+  onTransferToBail,
+  onOpenNalsa,
+  prefillQuery,
+  onPrefillConsumed,
+}) => {
+  const [query, setQuery] = useState('');
+  const [summaryLang, setSummaryLang] = useState<'en' | 'hi'>('en');
+  const [isListening, setIsListening] = useState(false);
+  const [speechSupported, setSpeechSupported] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [advisory, setAdvisory] = useState<LegalAdvisoryResponse | null>(null);
+
+  const [ttsLoading, setTtsLoading] = useState(false);
+  const [ttsPlaying, setTtsPlaying] = useState(false);
+  const [ttsError, setTtsError] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+
+  useEffect(() => {
+    const win = window as unknown as Record<string, unknown>;
+    if (win.SpeechRecognition || win.webkitSpeechRecognition) {
+      setSpeechSupported(true);
+    }
+    return () => {
+      recognitionRef.current?.stop();
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (prefillQuery) {
+      setQuery(prefillQuery);
+      onPrefillConsumed?.();
+    }
+  }, [prefillQuery, onPrefillConsumed]);
+
+  const toggleVoiceInput = () => {
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+      return;
+    }
+
+    const win = window as unknown as Record<string, unknown>;
+    const SpeechRecCtor = (win.SpeechRecognition ||
+      win.webkitSpeechRecognition) as
+      | (new () => SpeechRecognitionLike)
+      | undefined;
+
+    if (!SpeechRecCtor) {
+      setError('Voice input is not supported in this browser. Please type below.');
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecCtor();
+      recognition.lang = 'en-IN';
+      recognition.continuous = false;
+      recognition.interimResults = true;
+
+      recognition.onresult = (event) => {
+        let transcript = '';
+        for (let i = 0; i < event.results.length; i++) {
+          transcript += event.results[i][0].transcript;
+        }
+        setQuery(transcript);
+      };
+
+      recognition.onerror = () => setIsListening(false);
+      recognition.onend = () => setIsListening(false);
+
+      recognitionRef.current = recognition;
+      recognition.start();
+      setIsListening(true);
+      setError(null);
+    } catch {
+      setIsListening(false);
+      setError('Microphone permission denied. Please type your question below.');
+    }
+  };
+
+  const stopAudio = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+    }
+    setTtsPlaying(false);
+  };
+
+  const handleAnalyze = async (overrideQuery?: string) => {
+    const textToSend = (overrideQuery ?? query).trim();
+    if (textToSend.length < 3) {
+      setError('Please write or speak what happened first.');
+      return;
+    }
+
+    stopAudio();
+    setLoading(true);
+    setError(null);
+    setTtsError(null);
+
+    try {
+      const res = await fetch('/api/legal-aid', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: textToSend,
+          language: 'bilingual',
+        }),
+      });
+
+      const data = (await res.json()) as {
+        advisory?: LegalAdvisoryResponse;
+        error?: string;
+      };
+
+      if (!res.ok || !data.advisory) {
+        throw new Error(data.error || 'Could not get an answer right now.');
+      }
+
+      setAdvisory(data.advisory);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePlayAudio = async () => {
+    if (!advisory?.spoken_tts_script) return;
+    if (ttsPlaying) {
+      stopAudio();
+      return;
+    }
+
+    setTtsLoading(true);
+    setTtsError(null);
+
+    try {
+      const res = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: advisory.spoken_tts_script }),
+      });
+
+      const data = (await res.json()) as {
+        audioBase64?: string;
+        mimeType?: string;
+        error?: string;
+      };
+
+      if (!res.ok || !data.audioBase64) {
+        throw new Error(data.error || 'Could not generate audio.');
+      }
+
+      const audioUrl = `data:${data.mimeType || 'audio/wav'};base64,${data.audioBase64}`;
+      const audio = new Audio(audioUrl);
+      audioRef.current = audio;
+      audio.onended = () => setTtsPlaying(false);
+      audio.onerror = () => {
+        setTtsPlaying(false);
+        setTtsError('Audio could not play on this device.');
+      };
+      await audio.play();
+      setTtsPlaying(true);
+    } catch (err) {
+      setTtsError(
+        err instanceof Error ? err.message : 'Could not play voice audio.'
+      );
+    } finally {
+      setTtsLoading(false);
+    }
+  };
+
+  return (
+    <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
+      {/* Left Simple Input Box */}
+      <div className="lg:col-span-5 flex flex-col gap-5">
+        <div className="ink-card rounded-[24px] bg-[#F6F6E0] p-6">
+          <h3 className="font-display text-lg font-bold text-[#1A1A1A]">
+            Tell us what happened
+          </h3>
+          <p className="mt-1 text-xs text-[#4A4A43]">
+            Write or speak in simple English or Hindi.
+          </p>
+
+          <div className="mt-4">
+            <label htmlFor="legal-query-input" className="sr-only">
+              Describe your legal question
+            </label>
+            <textarea
+              id="legal-query-input"
+              rows={4}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Example: Police arrested my brother for a neighbor fight under Section 323 IPC. Can we get bail today?"
+              className="w-full rounded-2xl border-2 border-[#1A1A1A] bg-[#FFFFEB] p-4 text-sm text-[#1A1A1A] placeholder:text-[#8C8C80] focus:outline-none focus:ring-2 focus:ring-[#0041CA] resize-none leading-relaxed"
+            />
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={toggleVoiceInput}
+              disabled={!speechSupported}
+              className={`inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold rounded-xl border-2 border-[#1A1A1A] transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed ${
+                isListening
+                  ? 'bg-[#FFA946] text-[#1A1A1A]'
+                  : 'bg-[#FFFFEB] text-[#1A1A1A] hover:bg-[#F0D7FF]'
+              }`}
+            >
+              {isListening ? (
+                <>
+                  <MicOff className="h-4 w-4" aria-hidden="true" />
+                  <span>Stop</span>
+                </>
+              ) : (
+                <>
+                  <Mic className="h-4 w-4 text-[#0041CA]" aria-hidden="true" />
+                  <span>Speak</span>
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleAnalyze()}
+              disabled={loading || query.trim().length < 3}
+              className="btn-cobalt inline-flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  <span>Checking...</span>
+                </>
+              ) : (
+                <>
+                  <Send className="h-4 w-4" aria-hidden="true" />
+                  <span>Get Help</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          {error && (
+            <div
+              role="alert"
+              className="mt-4 flex items-start gap-2 rounded-xl border-2 border-[#1A1A1A] bg-[#FFBCF2]/50 p-3 text-xs font-medium text-[#1A1A1A]"
+            >
+              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" aria-hidden="true" />
+              <span>{error}</span>
+            </div>
+          )}
+        </div>
+
+        {/* 3 Quick Examples */}
+        <div className="rounded-[24px] border-2 border-[#1A1A1A] bg-[#F6F6E0] overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-[#E4E4D0]">
+            <h4 className="font-display text-xs font-bold text-[#4A4A43]">
+              Try an example
+            </h4>
+          </div>
+          <div className="divide-y divide-[#E4E4D0]">
+            {QUICK_EXAMPLES.map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                onClick={() => {
+                  setQuery(item.query);
+                  handleAnalyze(item.query);
+                }}
+                className="group flex w-full items-center justify-between gap-3 px-5 py-3 text-left text-xs sm:text-sm font-medium text-[#1A1A1A] hover:bg-[#FFFFEB] transition-colors cursor-pointer"
+              >
+                <span className="truncate">{item.label}</span>
+                <ArrowRight
+                  className="h-4 w-4 text-[#8C8C80] group-hover:text-[#0041CA] shrink-0"
+                  aria-hidden="true"
+                />
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Right Clear Answer Panel */}
+      <div className="lg:col-span-7">
+        {loading ? (
+          <div className="rounded-[26px] bg-[#1A1A1A] text-[#FFFFEB] p-7 space-y-5">
+            <div className="flex items-center gap-3 text-sm text-[#F0D7FF]">
+              <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
+              <span>Checking Indian law and bail rules...</span>
+            </div>
+            <div className="space-y-3 animate-pulse">
+              <div className="h-16 rounded-2xl bg-[#FFFFEB]/10" />
+              <div className="h-24 rounded-2xl bg-[#FFFFEB]/10" />
+            </div>
+          </div>
+        ) : !advisory ? (
+          <div className="flex h-full min-h-[340px] flex-col justify-between rounded-[26px] bg-[#1A1A1A] text-[#FFFFEB] p-7 sm:p-8">
+            <div>
+              <h3 className="font-display text-2xl sm:text-3xl font-bold text-[#FFFFEB]">
+                Clear answers,{' '}
+                <span className="font-editorial-italic text-[#F0D7FF]">
+                  zero jargon.
+                </span>
+              </h3>
+              <p className="mt-3 max-w-lg text-sm leading-relaxed text-[#FFFFEB]/75">
+                Ask any question on the left or pick an example. You will get a
+                plain-English answer, bail status, and 3 clear next steps.
+              </p>
+            </div>
+
+            <div className="mt-8 flex items-center justify-between gap-4 border-t border-[#FFFFEB]/15 pt-5 text-xs text-[#FFFFEB]/70">
+              <span>Need a free lawyer right away?</span>
+              <button
+                type="button"
+                onClick={onOpenNalsa}
+                className="inline-flex items-center gap-1.5 font-semibold text-[#F0D7FF] hover:text-[#FFFFEB] cursor-pointer"
+              >
+                <PhoneCall className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>Call NALSA 15100</span>
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-[26px] bg-[#1A1A1A] text-[#FFFFEB] p-7 sm:p-8 space-y-6">
+            {/* Bail Verdict + Listen Audio */}
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-[#FFFFEB]/15 pb-5">
+              <div className="flex items-center gap-2.5 text-sm font-bold">
+                {advisory.overall_bailable ? (
+                  <>
+                    <CheckCircle2
+                      className="h-5 w-5 text-[#34D399] shrink-0"
+                      aria-hidden="true"
+                    />
+                    <span className="text-[#34D399]">
+                      Police Must Grant Bail (Bailable)
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <AlertTriangle
+                      className="h-5 w-5 text-[#FFA946] shrink-0"
+                      aria-hidden="true"
+                    />
+                    <span className="text-[#FFA946]">
+                      Court Bail Needed (Non-Bailable)
+                    </span>
+                  </>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className="flex items-center rounded-xl bg-[#121211] p-1 border border-[#FFFFEB]/15">
+                  <button
+                    type="button"
+                    onClick={() => setSummaryLang('en')}
+                    className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                      summaryLang === 'en'
+                        ? 'bg-[#FFFFEB] text-[#1A1A1A]'
+                        : 'text-[#FFFFEB]/70 hover:text-[#FFFFEB]'
+                    }`}
+                  >
+                    English
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSummaryLang('hi')}
+                    className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                      summaryLang === 'hi'
+                        ? 'bg-[#FFFFEB] text-[#1A1A1A]'
+                        : 'text-[#FFFFEB]/70 hover:text-[#FFFFEB]'
+                    }`}
+                  >
+                    Hindi
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handlePlayAudio}
+                  disabled={ttsLoading}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-[#1A1A1A] bg-[#F0D7FF] hover:bg-[#FFFFEB] disabled:opacity-50 rounded-xl transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  {ttsLoading ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                  ) : ttsPlaying ? (
+                    <VolumeX className="h-3.5 w-3.5" aria-hidden="true" />
+                  ) : (
+                    <Volume2 className="h-3.5 w-3.5" aria-hidden="true" />
+                  )}
+                  <span>{ttsPlaying ? 'Stop' : 'Listen'}</span>
+                </button>
+              </div>
+            </div>
+
+            {ttsError && (
+              <div className="rounded-xl bg-[#FFA946]/15 px-4 py-2 text-xs text-[#FFA946]">
+                {ttsError}
+              </div>
+            )}
+
+            {/* Simple Plain-Language Answer */}
+            <p className="text-base leading-relaxed text-[#FFFFEB]">
+              {summaryLang === 'en'
+                ? advisory.empathetic_summary_en
+                : advisory.empathetic_summary_hi}
+            </p>
+
+            {/* 3 Clear Next Steps */}
+            <div className="space-y-2.5 rounded-2xl bg-[#121211] p-5 border border-[#FFFFEB]/10">
+              <h4 className="font-display text-xs font-bold text-[#F0D7FF]">
+                What to do right now
+              </h4>
+              <ol className="space-y-2 text-sm text-[#FFFFEB]/90 list-decimal pl-5">
+                {advisory.immediate_citizen_actions.slice(0, 3).map((step, i) => (
+                  <li key={i} className="leading-relaxed">
+                    {step}
+                  </li>
+                ))}
+              </ol>
+            </div>
+
+            {/* Matched Sections */}
+            {advisory.detected_sections.length > 0 && (
+              <div className="space-y-2">
+                <h4 className="font-display text-xs font-bold text-[#FFFFEB]/65">
+                  Matched Law Sections
+                </h4>
+                <div className="divide-y divide-[#FFFFEB]/10 rounded-2xl border border-[#FFFFEB]/15 overflow-hidden">
+                  {advisory.detected_sections.map((sec, idx) => (
+                    <div
+                      key={`${sec.bns_section}-${idx}`}
+                      className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-xs sm:text-sm"
+                    >
+                      <div>
+                        <span className="font-mono font-bold text-[#F0D7FF] tabular-nums">
+                          {sec.bns_section}
+                        </span>
+                        <span className="mx-2 text-[#FFFFEB]/40">/</span>
+                        <span className="font-mono text-[#FFFFEB]/70 tabular-nums">
+                          {sec.ipc_section}
+                        </span>
+                        <span className="mx-2 text-[#FFFFEB]/40">·</span>
+                        <span className="text-[#FFFFEB]">{sec.title}</span>
+                      </div>
+                      <span
+                        className={`font-semibold whitespace-nowrap ${
+                          sec.is_bailable ? 'text-[#34D399]' : 'text-[#FFA946]'
+                        }`}
+                      >
+                        {sec.is_bailable ? 'Bailable' : 'Non-Bailable'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Simple Bottom Action Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#FFFFEB]/15 pt-4">
+              <button
+                type="button"
+                onClick={onOpenNalsa}
+                className="text-xs font-semibold text-[#FFFFEB]/75 hover:text-[#FFFFEB] underline underline-offset-4 cursor-pointer"
+              >
+                Free Lawyer (15100)
+              </button>
+
+              {advisory.detected_sections.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const primary = advisory.detected_sections[0];
+                    onTransferToBail({
+                      bnsSection: primary.bns_section,
+                      ipcSection: primary.ipc_section,
+                      offenceTitle: primary.title,
+                    });
+                  }}
+                  className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-[#1A1A1A] bg-[#FFA946] hover:bg-[#FFFFEB] rounded-xl transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  <Scale className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>Check Bail Eligibility</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};

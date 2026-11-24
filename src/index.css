@@ -1,0 +1,123 @@
+@import "tailwindcss";
+
+:root {
+  --cream: #ffffeb;
+  --cream2: #f6f6e0;
+  --line: #e4e4d0;
+  --ink: #1a1a1a;
+  --ink2: #4a4a43;
+  --mute: #8c8c80;
+  --ghost: #c9c9b8;
+  --green: #034f46;
+  --lav: #f0d7ff;
+  --orange: #ffa946;
+  --pink: #ffbcf2;
+  --mint: #34d399;
+  --blue: #0041ca;
+  --blue2: #0033a3;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@theme {
+  --font-display: "DM Sans", system-ui, -apple-system, sans-serif;
+  --font-serif-italic: "DM Serif Display", Georgia, serif;
+  --font-sans: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+@layer base {
+  html {
+    background-color: var(--cream);
+    color: var(--ink);
+    font-family: var(--font-sans);
+  }
+
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+  }
+
+  body {
+    overflow-x: hidden;
+    background-color: var(--cream);
+    color: var(--ink);
+  }
+}
+
+.font-editorial-italic {
+  font-family: "DM Serif Display", Georgia, serif;
+  font-style: italic;
+  font-weight: 400;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Signature curved night-emerald hero canvas from hackos.scaler.com/wispr */
+.wf-night {
+  color: var(--cream);
+  background:
+    radial-gradient(55% 60% at 78% 32%, #034f46bf, transparent 70%),
+    radial-gradient(35% 40% at 92% 75%, #f0d7ff1f, transparent 70%),
+    radial-gradient(40% 50% at 10% 10%, #034f4659, transparent 70%),
+    radial-gradient(80% 24% at 28% 72%, #034f468c, transparent 70%),
+    #121211;
+  border-radius: 0 0 clamp(40px, 6vw, 96px) clamp(40px, 6vw, 96px);
+}
+
+/* Tactile neo-editorial button & panel ink shadow */
+.ink-card {
+  border: 2px solid var(--ink);
+  box-shadow: 4px 4px 0 var(--ink);
+}
+
+.btn-cobalt {
+  background-color: var(--blue);
+  color: #ffffff;
+  border: 2px solid var(--ink);
+  box-shadow: 3px 3px 0 var(--ink);
+  transition: background-color 150ms var(--ease), transform 150ms var(--ease), box-shadow 150ms var(--ease);
+}
+
+.btn-cobalt:hover:not(:disabled) {
+  background-color: var(--blue2);
+  transform: translate(-1px, -1px);
+  box-shadow: 4px 4px 0 var(--ink);
+}
+
+.btn-cobalt:active:not(:disabled) {
+  transform: translate(1px, 1px);
+  box-shadow: 1px 1px 0 var(--ink);
+}
+
+.btn-cream {
+  background-color: var(--cream);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  transition: background-color 150ms var(--ease), transform 150ms var(--ease);
+}
+
+.btn-cream:hover:not(:disabled) {
+  background-color: var(--lav);
+}
+
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only-dossier {
+    display: block !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+}
