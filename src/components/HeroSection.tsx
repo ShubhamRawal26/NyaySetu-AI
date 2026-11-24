@@ -6,7 +6,7 @@ interface HeroSectionProps {
   onLaunchScanner: () => void;
 }
 
-const HERO_IMAGE_PATH = '/src/assets/images/hero_justice_voice_1795503596517.jpg';
+const HERO_IMAGE_PATH = '/assets/aistudio/worker_ace1c74d.png';
 
 const QUICK_FACTS = [
   { value: '15100', label: 'Free Government Lawyer' },
@@ -26,7 +26,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
       {/* Curved Night-Emerald Hero */}
       <div className="wf-night pt-26 pb-16 sm:pt-30 sm:pb-18 lg:pt-32 lg:pb-22">
         <div className="mx-auto max-w-[1280px] px-5 sm:px-8 lg:px-12">
-          <div className="grid grid-cols-1 gap-10 lg:grid-cols-12 lg:items-stretch">
+          <div className="grid grid-cols-1 gap-10 lg:grid-cols-12 lg:items-center">
             {/* Left Clear Plain-English Hero */}
             <div className="flex flex-col justify-center lg:col-span-7">
               <div className="mb-3 flex items-center gap-2 text-xs font-medium text-[#FFFFEB]/70">
@@ -75,19 +75,19 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
               </div>
             </div>
 
-            {/* Right Editorial Visual */}
-            <div className="lg:col-span-5">
-              <div className="relative h-60 sm:h-72 lg:h-full min-h-[260px] w-full overflow-hidden rounded-[26px] border-2 border-[#FFFFEB]/20 bg-[#1A1A1A]">
+            {/* Right Main Emblem Visual */}
+            <div className="lg:col-span-5 flex items-center justify-center">
+              <div className="relative flex items-center justify-center w-full max-w-[360px] aspect-square overflow-hidden rounded-[32px] border-2 border-[#FFFFEB]/20 bg-[#0D1615]/70 p-6 sm:p-8 shadow-2xl">
                 {!imgError ? (
                   <img
                     src={HERO_IMAGE_PATH}
-                    alt="Voice soundwave passing through scales of justice"
+                    alt="NyayaSetu emblem showing scales of justice and magnifying glass"
                     referrerPolicy="no-referrer"
                     onError={() => setImgError(true)}
-                    className="h-full w-full object-cover"
+                    className="h-full w-full object-contain drop-shadow-[0_14px_28px_rgba(0,0,0,0.45)]"
                   />
                 ) : (
-                  <div className="flex h-full w-full flex-col items-center justify-center bg-[#034F46]/40 p-8 text-center">
+                  <div className="flex h-full w-full flex-col items-center justify-center bg-[#034F46]/40 p-8 text-center rounded-2xl">
                     <Scale
                       className="h-11 w-11 text-[#F0D7FF] mb-3"
                       aria-hidden="true"
@@ -97,7 +97,6 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
                     </p>
                   </div>
                 )}
-                <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#121211]/85 via-transparent to-transparent" />
               </div>
             </div>
           </div>

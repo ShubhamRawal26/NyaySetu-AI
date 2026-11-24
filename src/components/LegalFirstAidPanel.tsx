@@ -47,21 +47,34 @@ interface SpeechRecognitionLike {
 
 const QUICK_EXAMPLES = [
   {
-    label: 'Neighbor fight (Sec. 323 IPC / 115 BNS)',
+    label: 'Neighbor fight (Sec. 115 / 351 BNS)',
     query:
-      'My brother was taken to the police station after a neighbor fight under Section 323 IPC / 115(2) BNS. Can he get bail at the station?',
+      'कल रात पुलिस मेरे भाई को ले गई। पड़ोसी से मामूली कहासुनी हुई थी, पुलिस धारा 115 और 351 लगा रही है। क्या उसे जेल होगी?',
   },
   {
-    label: 'Small theft under ₹5,000 (Sec. 379 IPC / 303 BNS)',
+    label: 'Small theft under ₹5,000 (Sec. 303 BNS)',
     query:
-      'My son was arrested for a first-time theft of a bicycle worth ₹3,500 under Section 303(2) BNS. Can he avoid jail?',
+      'Police arrested Ramesh for stealing a bicycle worth Rs 3500 under Section 303 BNS. It is his first mistake.',
   },
   {
-    label: 'In jail over 1 year (First offence bail)',
+    label: 'In jail 9 months (Sec. 479 BNSS bail)',
     query:
-      'My husband has been in jail for 14 months for his first offence under Section 379 IPC (max 3 years). Can he get bail under Section 479 BNSS?',
+      'My uncle has been in district jail for 9 months for a theft case with 2 years max punishment. Trial has not even started. Can he get bail?',
+  },
+  {
+    label: 'Cheating case (Sec. 420 IPC / 318 BNS)',
+    query:
+      'Someone accused my brother of cheating and taking money under 420. Police arrested him today.',
   },
 ];
+
+function formatCitation(prefix: 'BNS' | 'IPC', value: string): string {
+  const clean = value
+    .replace(/^(?:Sec\.?|Section|BNS|IPC)\s*/gi, '')
+    .replace(/\s*(?:BNS|IPC)$/gi, '')
+    .trim();
+  return `${prefix} ${clean}`;
+}
 
 export const LegalFirstAidPanel: React.FC<LegalFirstAidPanelProps> = ({
   onTransferToBail,
@@ -188,6 +201,8 @@ export const LegalFirstAidPanel: React.FC<LegalFirstAidPanelProps> = ({
       }
 
       setAdvisory(data.advisory);
+      const hasDevanagari = /[\u0900-\u097F]/.test(textToSend);
+      setSummaryLang(hasDevanagari ? 'hi' : 'en');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong.');
     } finally {
@@ -476,6 +491,22 @@ export const LegalFirstAidPanel: React.FC<LegalFirstAidPanelProps> = ({
                 : advisory.empathetic_summary_hi}
             </p>
 
+            {/* Section 479 BNSS Statutory Relief Highlight */}
+            {advisory.statutory_bail_sec_479_applicable && (
+              <div className="flex items-start gap-3 rounded-2xl border border-[#34D399]/35 bg-[#034F46]/45 px-4 py-3 text-xs sm:text-sm text-[#FFFFEB]">
+                <Scale
+                  className="h-4 w-4 text-[#34D399] shrink-0 mt-0.5"
+                  aria-hidden="true"
+                />
+                <span>
+                  <strong className="font-semibold text-[#34D399]">
+                    Section 479 BNSS Applies:
+                  </strong>{' '}
+                  First-time undertrials qualify for mandatory statutory bail after serving 1/3rd of the maximum sentence.
+                </span>
+              </div>
+            )}
+
             {/* 3 Clear Next Steps */}
             <div className="space-y-2.5 rounded-2xl bg-[#121211] p-5 border border-[#FFFFEB]/10">
               <h4 className="font-display text-xs font-bold text-[#F0D7FF]">
@@ -502,24 +533,29 @@ export const LegalFirstAidPanel: React.FC<LegalFirstAidPanelProps> = ({
                       key={`${sec.bns_section}-${idx}`}
                       className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-xs sm:text-sm"
                     >
-                      <div>
+                      <div className="min-w-0">
                         <span className="font-mono font-bold text-[#F0D7FF] tabular-nums">
-                          {sec.bns_section}
+                          {formatCitation('BNS', sec.bns_section)}
                         </span>
                         <span className="mx-2 text-[#FFFFEB]/40">/</span>
                         <span className="font-mono text-[#FFFFEB]/70 tabular-nums">
-                          {sec.ipc_section}
+                          {formatCitation('IPC', sec.ipc_section)}
                         </span>
                         <span className="mx-2 text-[#FFFFEB]/40">·</span>
                         <span className="text-[#FFFFEB]">{sec.title}</span>
                       </div>
-                      <span
-                        className={`font-semibold whitespace-nowrap ${
-                          sec.is_bailable ? 'text-[#34D399]' : 'text-[#FFA946]'
-                        }`}
-                      >
-                        {sec.is_bailable ? 'Bailable' : 'Non-Bailable'}
-                      </span>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <span className="text-xs text-[#FFFFEB]/65 tabular-nums">
+                          Max: {sec.max_punishment}
+                        </span>
+                        <span
+                          className={`font-semibold whitespace-nowrap ${
+                            sec.is_bailable ? 'text-[#34D399]' : 'text-[#FFA946]'
+                          }`}
+                        >
+                          {sec.is_bailable ? 'Bailable' : 'Non-Bailable'}
+                        </span>
+                      </div>
                     </div>
                   ))}
                 </div>
