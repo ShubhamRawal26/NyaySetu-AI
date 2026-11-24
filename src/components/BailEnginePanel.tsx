@@ -16,6 +16,7 @@ import {
   findCatalogSection,
 } from '../shared/bnsCatalog';
 import type { BailTransferPayload } from '../types/legal';
+import { postJsonWithRetry } from '../utils/apiClient';
 
 interface BailEnginePanelProps {
   transferPayload?: BailTransferPayload | null;
@@ -107,10 +108,12 @@ export const BailEnginePanel: React.FC<BailEnginePanelProps> = ({
     setError(null);
 
     try {
-      const res = await fetch('/api/bail-dossier', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const data = await postJsonWithRetry<{
+        dossier_text?: string;
+        error?: string;
+      }>(
+        '/api/bail-dossier',
+        {
           accusedName: accusedName.trim() || 'Applicant',
           firNumber: firNumber.trim() || 'As per FIR',
           policeStation: policeStation.trim() || 'Concerned Police Station',
@@ -124,17 +127,11 @@ export const BailEnginePanel: React.FC<BailEnginePanelProps> = ({
           maxPunishmentMonths: selectedRecord.maxPunishmentMonths,
           undergoneDays,
           isFirstTimeOffender,
-        }),
-      });
+        },
+        'Could not draft bail letter.'
+      );
 
-      let data: { dossier_text?: string; error?: string } = {};
-      try {
-        data = (await res.json()) as { dossier_text?: string; error?: string };
-      } catch {
-        throw new Error('Server returned an unexpected response. Please try again.');
-      }
-
-      if (!res.ok || !data.dossier_text) {
+      if (!data.dossier_text) {
         throw new Error(data.error || 'Could not draft bail letter.');
       }
 

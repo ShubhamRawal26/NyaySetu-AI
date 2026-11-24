@@ -294,17 +294,57 @@ export const BNS_STATUTORY_CATALOG: StatutorySectionRecord[] = [
   },
 ];
 
+const DEVANAGARI_DIGITS: Record<string, string> = {
+  '०': '0',
+  '१': '1',
+  '२': '2',
+  '३': '3',
+  '४': '4',
+  '५': '5',
+  '६': '6',
+  '७': '7',
+  '८': '8',
+  '९': '9',
+};
+
+const HINDI_EXTRA_KEYWORDS: Record<string, string[]> = {
+  'bns-115-2': ['मारपीट', 'झगड़ा', 'कहासुनी', 'पड़ोसी', 'थप्पड़', 'साधारण चोट'],
+  'bns-352': ['गाली', 'अपमान', 'अभद्र'],
+  'bns-351-2': ['धमकी', 'धमकाना', 'जान से मारने की धमकी'],
+  'bns-303-2': ['चोरी', 'साइकिल', 'मोबाइल चोरी', 'चोर'],
+  'bns-305': ['घर में चोरी', 'मकान में चोरी'],
+  'bns-318-4': ['धोखाधड़ी', 'धोखा', 'ठगी', 'फ्रॉड', 'पैसे ठग'],
+  'bns-316-2': ['अमानत में खयानत', 'विश्वासघात'],
+  'bns-117-2': ['गंभीर चोट', 'हड्डी टूट', 'फ्रैक्चर'],
+  'bns-118-1': ['हथियार', 'चाकू', 'लाठी', 'डंडे', 'सरिया'],
+  'bns-126-2': ['रास्ता रोकना', 'रास्ता रोका'],
+  'bns-329-3': ['जमीन विवाद', 'अवैध कब्जा', 'घर में घुस'],
+  'bns-281': ['एक्सीडेंट', 'दुर्घटना', 'लापरवाही से गाड़ी', 'तेज गाड़ी'],
+  'bns-85': ['दहेज', 'क्रूरता', 'प्रताड़ना', 'ससुराल'],
+  'bns-106-1': ['लापरवाही से मौत', 'सड़क दुर्घटना में मौत'],
+  'bns-355': ['शराब', 'नशे में'],
+  'bns-109': ['हत्या का प्रयास', 'जानलेवा हमला'],
+};
+
+export function normalizeIndicDigits(input: string): string {
+  return input.replace(/[०-९]/g, (ch) => DEVANAGARI_DIGITS[ch] ?? ch);
+}
+
 export function detectSectionsFromText(input: string): StatutorySectionRecord[] {
-  const normalized = input.toLowerCase();
+  const normalized = normalizeIndicDigits(input).toLowerCase();
   const matches: StatutorySectionRecord[] = [];
 
   for (const record of BNS_STATUTORY_CATALOG) {
-    const matched = record.keywords.some((kw) => {
+    const allKeywords = [
+      ...record.keywords,
+      ...(HINDI_EXTRA_KEYWORDS[record.id] ?? []),
+    ];
+    const matched = allKeywords.some((kw) => {
       if (/^\d+[a-z]?$/.test(kw)) {
         const regex = new RegExp(`\\b${kw}\\b`, 'i');
         return regex.test(normalized);
       }
-      return normalized.includes(kw);
+      return normalized.includes(kw.toLowerCase());
     });
     if (matched) {
       matches.push(record);

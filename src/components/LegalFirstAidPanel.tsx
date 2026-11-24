@@ -16,6 +16,7 @@ import type {
   BailTransferPayload,
   LegalAdvisoryResponse,
 } from '../types/legal';
+import { postJsonWithRetry } from '../utils/apiClient';
 
 interface LegalFirstAidPanelProps {
   onTransferToBail: (payload: BailTransferPayload) => void;
@@ -93,13 +94,10 @@ export const LegalFirstAidPanel: React.FC<LegalFirstAidPanelProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [advisory, setAdvisory] = useState<LegalAdvisoryResponse | null>(null);
 
-  const [ttsLoading, setTtsLoading] = useState(false);
   const [ttsPlaying, setTtsPlaying] = useState(false);
   const [ttsError, setTtsError] = useState<string | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const analyzeRequestIdRef = useRef<number>(0);
-  const ttsRequestIdRef = useRef<number>(0);
 
   useEffect(() => {
     const win = window as unknown as Record<string, unknown>;
@@ -108,8 +106,8 @@ export const LegalFirstAidPanel: React.FC<LegalFirstAidPanelProps> = ({
     }
     return () => {
       recognitionRef.current?.stop();
-      if (audioRef.current) {
-        audioRef.current.pause();
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
       }
     };
   }, []);
@@ -167,13 +165,10 @@ export const LegalFirstAidPanel: React.FC<LegalFirstAidPanelProps> = ({
   };
 
   const stopAudio = () => {
-    ttsRequestIdRef.current += 1;
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
     }
     setTtsPlaying(false);
-    setTtsLoading(false);
   };
 
   const handleAnalyze = async (overrideQuery?: string) => {
@@ -190,28 +185,21 @@ export const LegalFirstAidPanel: React.FC<LegalFirstAidPanelProps> = ({
     setTtsError(null);
 
     try {
-      const res = await fetch('/api/legal-aid', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const data = await postJsonWithRetry<{
+        advisory?: LegalAdvisoryResponse;
+        error?: string;
+      }>(
+        '/api/legal-aid',
+        {
           query: textToSend,
           language: 'bilingual',
-        }),
-      });
-
-      let data: { advisory?: LegalAdvisoryResponse; error?: string } = {};
-      try {
-        data = (await res.json()) as {
-          advisory?: LegalAdvisoryResponse;
-          error?: string;
-        };
-      } catch {
-        throw new Error('Server returned an unexpected response. Please try again.');
-      }
+        },
+        'Could not get an answer right now.'
+      );
 
       if (reqId !== analyzeRequestIdRef.current) return;
 
-      if (!res.ok || !data.advisory) {
+      if (!data.advisory) {
         throw new Error(data.error || 'Could not get an answer right now.');
       }
 
@@ -228,64 +216,55 @@ export const LegalFirstAidPanel: React.FC<LegalFirstAidPanelProps> = ({
     }
   };
 
-  const handlePlayAudio = async () => {
-    if (!advisory?.spoken_tts_script) return;
+  const handlePlayAudio = () => {
+    if (!advisory) return;
     if (ttsPlaying) {
       stopAudio();
       return;
     }
 
-    const reqId = ++ttsRequestIdRef.current;
-    setTtsLoading(true);
-    setTtsError(null);
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      setTtsError('Voice playback is not supported in this browser.');
+      return;
+    }
+
+    const textToSpeak =
+      summaryLang === 'hi'
+        ? advisory.spoken_tts_script || advisory.empathetic_summary_hi
+        : advisory.empathetic_summary_en;
+
+    if (!textToSpeak) return;
 
     try {
-      const res = await fetch('/api/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: advisory.spoken_tts_script }),
-      });
+      setTtsError(null);
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(textToSpeak);
+      const targetLang = summaryLang === 'hi' ? 'hi-IN' : 'en-IN';
+      utterance.lang = targetLang;
+      utterance.rate = 0.96;
 
-      let data: { audioBase64?: string; mimeType?: string; error?: string } = {};
-      try {
-        data = (await res.json()) as {
-          audioBase64?: string;
-          mimeType?: string;
-          error?: string;
-        };
-      } catch {
-        throw new Error('Could not generate audio right now.');
+      const voices = window.speechSynthesis.getVoices();
+      const matchedVoice =
+        voices.find((v) => v.lang.toLowerCase() === targetLang.toLowerCase()) ||
+        voices.find((v) =>
+          v.lang.toLowerCase().startsWith(summaryLang === 'hi' ? 'hi' : 'en')
+        );
+      if (matchedVoice) {
+        utterance.voice = matchedVoice;
       }
 
-      if (reqId !== ttsRequestIdRef.current) return;
-
-      if (!res.ok || !data.audioBase64) {
-        throw new Error(data.error || 'Could not generate audio.');
-      }
-
-      const audioUrl = `data:${data.mimeType || 'audio/wav'};base64,${data.audioBase64}`;
-      const audio = new Audio(audioUrl);
-      audioRef.current = audio;
-      audio.onended = () => setTtsPlaying(false);
-      audio.onerror = () => {
+      utterance.onstart = () => setTtsPlaying(true);
+      utterance.onend = () => setTtsPlaying(false);
+      utterance.onerror = () => {
         setTtsPlaying(false);
-        setTtsError('Audio could not play on this device.');
+        setTtsError('Voice playback could not start on this device.');
       };
-      await audio.play();
-      if (reqId !== ttsRequestIdRef.current) {
-        audio.pause();
-        return;
-      }
+
+      window.speechSynthesis.speak(utterance);
       setTtsPlaying(true);
-    } catch (err) {
-      if (reqId !== ttsRequestIdRef.current) return;
-      setTtsError(
-        err instanceof Error ? err.message : 'Could not play voice audio.'
-      );
-    } finally {
-      if (reqId === ttsRequestIdRef.current) {
-        setTtsLoading(false);
-      }
+    } catch {
+      setTtsPlaying(false);
+      setTtsError('Could not play voice audio on this device.');
     }
   };
 
@@ -499,12 +478,9 @@ export const LegalFirstAidPanel: React.FC<LegalFirstAidPanelProps> = ({
                   <button
                     type="button"
                     onClick={handlePlayAudio}
-                    disabled={ttsLoading}
-                    className="inline-flex h-9 items-center gap-1.5 px-3.5 text-xs font-semibold text-[#1A1A1A] bg-[#F0D7FF] hover:bg-[#FFFFEB] disabled:opacity-50 rounded-xl transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                    className="inline-flex h-9 items-center gap-1.5 px-3.5 text-xs font-semibold text-[#1A1A1A] bg-[#F0D7FF] hover:bg-[#FFFFEB] rounded-xl transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                   >
-                    {ttsLoading ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                    ) : ttsPlaying ? (
+                    {ttsPlaying ? (
                       <VolumeX className="h-3.5 w-3.5" aria-hidden="true" />
                     ) : (
                       <Volume2 className="h-3.5 w-3.5" aria-hidden="true" />

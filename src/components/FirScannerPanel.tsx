@@ -14,6 +14,46 @@ import type {
   BailTransferPayload,
   FIROCRExtractionResponse,
 } from '../types/legal';
+import { postJsonWithRetry } from '../utils/apiClient';
+
+function optimizeImageForOcr(
+  dataUrl: string,
+  mimeType: string
+): Promise<{ dataUrl: string; mimeType: string }> {
+  return new Promise((resolve) => {
+    if (mimeType === 'application/pdf') {
+      resolve({ dataUrl, mimeType });
+      return;
+    }
+    const img = new Image();
+    img.onload = () => {
+      const maxDim = 1600;
+      const scale = Math.min(1, maxDim / Math.max(img.width || 1, img.height || 1));
+      // Keep already small images untouched
+      if (scale === 1 && dataUrl.length < 1_400_000) {
+        resolve({ dataUrl, mimeType });
+        return;
+      }
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve({ dataUrl, mimeType });
+          return;
+        }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const compressed = canvas.toDataURL('image/jpeg', 0.85);
+        resolve({ dataUrl: compressed, mimeType: 'image/jpeg' });
+      } catch {
+        resolve({ dataUrl, mimeType });
+      }
+    };
+    img.onerror = () => resolve({ dataUrl, mimeType });
+    img.src = dataUrl;
+  });
+}
 
 interface FirScannerPanelProps {
   onTransferToBail: (payload: BailTransferPayload) => void;
@@ -49,26 +89,20 @@ export const FirScannerPanel: React.FC<FirScannerPanelProps> = ({
     setError(null);
 
     try {
-      const res = await fetch('/api/fir-ocr', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          imageBase64: base64Data,
-          mimeType: mime,
-        }),
-      });
+      const prepared = await optimizeImageForOcr(base64Data, mime);
+      const data = await postJsonWithRetry<{
+        extraction?: FIROCRExtractionResponse;
+        error?: string;
+      }>(
+        '/api/fir-ocr',
+        {
+          imageBase64: prepared.dataUrl,
+          mimeType: prepared.mimeType,
+        },
+        'Could not read this FIR photo.'
+      );
 
-      let data: { extraction?: FIROCRExtractionResponse; error?: string } = {};
-      try {
-        data = (await res.json()) as {
-          extraction?: FIROCRExtractionResponse;
-          error?: string;
-        };
-      } catch {
-        throw new Error('Server returned an unexpected response. Please try again.');
-      }
-
-      if (!res.ok || !data.extraction) {
+      if (!data.extraction) {
         throw new Error(data.error || 'Could not read this FIR photo.');
       }
 
