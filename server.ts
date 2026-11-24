@@ -181,14 +181,14 @@ function validateUploadedDocument(
   return { ok: true, data: stripped, mimeType };
 }
 
-function getGeminiClient(apiVersion?: string): GoogleGenAI {
+function getGeminiClient(apiVersion = 'v1beta'): GoogleGenAI {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error('GEMINI_API_KEY_MISSING');
   }
   return new GoogleGenAI({
     apiKey,
-    ...(apiVersion ? { apiVersion } : {}),
+    apiVersion,
     httpOptions: {
       timeout: REQUEST_TIMEOUT_MS,
       headers: {
@@ -221,7 +221,8 @@ async function generateWithResilience(
 ) {
   const attempts: Array<{ model: string; useThinking: boolean; delayMs: number }> = [
     { model: PRIMARY_MODEL, useThinking: true, delayMs: 0 },
-    { model: FALLBACK_MODEL, useThinking: false, delayMs: 500 },
+    { model: FALLBACK_MODEL, useThinking: false, delayMs: 600 },
+    { model: FALLBACK_MODEL, useThinking: false, delayMs: 1800 },
   ];
 
   let lastErr: unknown;
@@ -237,7 +238,6 @@ async function generateWithResilience(
           ...params.config,
           ...(attempt.useThinking
             ? {
-                seed: 42,
                 thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
               }
             : {}),
@@ -245,10 +245,6 @@ async function generateWithResilience(
       });
     } catch (err) {
       lastErr = err;
-      const codeMatch = String(err instanceof Error ? err.message : err).match(/\b(4\d\d|5\d\d)\b/);
-      console.warn(
-        `[NyayaSetu] Gemini attempt failed (${attempt.model}, status=${codeMatch?.[1] ?? 'unknown'})`
-      );
       if (!isTransientError(err)) throw err;
     }
   }
