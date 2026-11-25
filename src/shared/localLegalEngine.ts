@@ -150,7 +150,7 @@ export function analyzeLegalQueryLocally(query: string): {
 
   const qLower = normalizeIndicDigits(query).toLowerCase().trim();
   const isGreetingOrSmallTalk =
-    /^(?:hi+|he+y+|hello+|hlo+|yo+|sup|namaste|namaskar|pranam|salaam|good\s*(?:morning|afternoon|evening|night)|how\s+are\s+you|how\s*r\s*u|kaise\s+ho|kya\s+haal|what'?s\s+up|thanks|thank\s+you|thx|dhanyawad|shukriya|ok|okay|bro|bhai|friend)(?:[\s,!?.]*(?:bro|bhai|sir|ji|friend|there|how\s+are\s+you|how\s*r\s*u|kaise\s+ho|kya\s+haal|what'?s\s+up|all\s+good|can\s+you\s+help(?:\s+me)?|please))*[\s,!?.]*$/i.test(
+    /^(?:hi+|he+y+|hello+|hlo+|yo+|sup|namaste|namaskar|pranam|salaam|good\s*(?:morning|afternoon|evening|night)|how\s+are\s+you|how\s*r\s*u|kaise\s+ho|kya\s+haal|what'?s\s+up|thanks|thank\s+you|thx|dhanyawad|shukriya|ok|okay|bro|bhai|friend|aur\s+batao|sab\s+badhiya)(?:[\s,!?.]*(?:bro|bhai|sir|ji|friend|there|how\s+are\s+you|how\s*r\s*u|kaise\s+ho|kya\s+haal|what'?s\s+up|all\s+good|can\s+you\s+help(?:\s+me)?|please))*[\s,!?.]*$/i.test(
       qLower
     ) ||
     /^(?:नमस्ते|नमस्कार|प्रणाम|हेलो|हाय|भाई|दोस्त|कैसे हो|कैसे हैं|क्या हाल है|क्या हाल|धन्यवाद|शुक्रिया)(?:[\s,!?.।]*(?:नमस्ते|नमस्कार|भाई|जी|दोस्त|कैसे हो|कैसे हैं|क्या हाल है|क्या हाल|सब ठीक))*[\s,!?.।]*$/i.test(
@@ -158,22 +158,33 @@ export function analyzeLegalQueryLocally(query: string): {
     );
 
   const isCapabilityQuestion =
-    /\b(?:who\s+are\s+you|what\s+can\s+you\s+do|how\s+does\s+this\s+work|help\s+me|what\s+is\s+nyayasetu)\b|आप कौन हैं|क्या कर सकते/i.test(
+    /\b(?:who\s+are\s+you|what\s+can\s+you\s+do|how\s+does\s+this\s+work|what\s+is\s+nyayasetu|tum\s+kaun\s+ho|aap\s+kaun\s+ho|kya\s+kar\s+sakte\s+ho)\b|आप कौन हैं|क्या कर सकते/i.test(
       qLower
     );
 
   const isAnticipatoryBailQuery =
-    /\b(?:anticipatory\s+bail|before\s+arrest|false\s+(?:fir|case)|framed|threaten(?:ing)?\s+to\s+file\s+fir|438\s*crpc|482\s*bnss)\b|अग्रिम जमानत|झूठी\s*(?:एफआईआर|fir|केस)/i.test(
+    /\b(?:anticipatory\s+bail|agrim\s+jamanat|agrim\s+bail|before\s+arrest|false\s+(?:fir|case)|jhoota\s+case|jhoothi\s+fir|jhuthi\s+fir|framed|phasaya|fasa\s+diya|threaten(?:ing)?\s+to\s+file\s+fir|438\s*crpc|482\s*bnss)\b|अग्रिम जमानत|झूठी\s*(?:एफआईआर|fir|केस)|झूठा केस/i.test(
       qLower
     );
 
   const isFirRefusalQuery =
-    /\b(?:refus(?:e|ing|ed)\s+(?:to\s+)?(?:file|write|register|lodge)\s+fir|not\s+(?:writing|registering|filing)\s+fir|zero\s+fir|how\s+to\s+file\s+(?:an?\s+)?fir)\b|एफआईआर\s*नहीं\s*लिख|fir\s*nahi\s*likh|जीरो एफआईआर/i.test(
+    /\b(?:refus(?:e|ing|ed)\s+(?:to\s+)?(?:file|write|register|lodge)\s+fir|not\s+(?:writing|registering|filing)\s+fir|zero\s+fir|how\s+to\s+file\s+(?:an?\s+)?fir|fir\s+kaise\s+kar(?:e|ein|u)|police\s+fir\s+nahi\s+likh|complaint\s+nahi\s+le)\b|एफआईआर\s*नहीं\s*लिख|fir\s*nahi\s*likh|जीरो एफआईआर/i.test(
       qLower
     );
 
   const isArrestOrCustodyQuery =
-    /\b(?:arrest|arrested|police\s+took|thana|police\s+station|custody|lockup|detained|jail|bail|jamaanat|jmanat|fir|remand|warrant|magistrate|court|lawyer|vakil)\b|गिरफ्तार|पुलिस|थाने|जेल|जमानत|वकील|अरेस्ट|हिरासत/i.test(
+    /\b(?:arrest|arrested|police\s+took|police\s+le\s+gay[ei]|police\s+pakad|pakad\s+ke\s+le|utha\s+le\s+gay[ei]|thana|thane|police\s+station|custody|lockup|detained|jail|bail|jamaanat|jmanat|jamanat|fir|remand|warrant|magistrate|court|lawyer|vakil|vakeel)\b|गिरफ्तार|पुलिस|थाने|जेल|जमानत|वकील|अरेस्ट|हिरासत/i.test(
+      qLower
+    );
+
+  const isVictimPerspective =
+    !isArrestOrCustodyQuery &&
+    (/\b(?:attack(?:ed|ing)?\s+(?:on\s+)?me|someone\s+(?:attack|hit|beat|slap|punch|threaten|cheat|scam|stole|rob|stab)|(?:hit|beat|slapped|punched|assaulted|threatened|cheated|scammed|robbed|stabbed)\s+me|what\s+(?:should|can|do)\s+i\s+do\s+if|self\s*defen[cs]e|kisi\s+ne\s+(?:mujhe|mujh\s*par|mere|mera|meri|chaku|lathi|dande|sariya|online|otp|fraud|dhoka|paise|hamla|humla|chori)|mujhe\s+(?:maara|mara|peeta|pita|dhamki|dhoka|thappad|luta|thag)|mujh\s*par\s+hamla|mere\s+saath\s+(?:marpit|maar\s*peet|dhoka|fraud|chori|galat|scam|thagi)|mera\s+(?:phone|mobile|paisa|paise|wallet|cycle|saman|account)\s+(?:chori|gayab|khali|hack)|paise\s+(?:le\s+liye|thag\s+liye|chori\s+ho|kat\s+gaye|nikal\s+liye)|pati\s+(?:marta|peetta|pareshan)|sasural\s+wale\s+(?:dahej|pareshan|maarte)|agar\s+koi\s+(?:mujhe|mujh\s*par|hamla|maare|dhamki|chori))\b|किसी ने मुझे|मुझ पर हमला|मुझे मारा|मेरे साथ धोखा|मेरा फोन चोरी/i.test(
+      qLower
+    ));
+
+  const isCyberOrWomenHarassmentQuery =
+    /\b(?:stalking|eve\s*teasing|molest|molestation|harass|harassing|harassment|chhedkhani|chedkhani|bad\s+touch|morphed\s+photo|blackmail\s+photo|private\s+photo)\b|छेड़खानी|परेशान कर रहा/i.test(
       qLower
     );
 
@@ -228,22 +239,34 @@ export function analyzeLegalQueryLocally(query: string): {
       }
     } else if (isGreetingOrSmallTalk || isCapabilityQuestion) {
       summaryEn =
-        "Hey! I'm doing well and ready to help. I am NyayaSetu, your Indian legal aid helper for BNS 2023, IPC 1860, and BNSS bail rights. Tell me what happened or mention a police section (like 323 IPC, 303 BNS, or 420 IPC), and I'll explain bail status and clear next steps in simple English or Hindi.";
+        "Hey! I'm doing well and ready to help—you can write in English, Hindi, or Hinglish. Tell me what happened (for example: \"what if someone attacks me\", \"kisi ne mujhe maara\", \"police bhai ko le gayi\", or mention a section like 323 IPC, 303 BNS, 420 IPC), and I'll give you the exact BNS/IPC law, bail rights, and next steps.";
       summaryHi =
-        'नमस्ते! मैं बिल्कुल ठीक हूँ और आपकी मदद के लिए तैयार हूँ। मैं न्यायसेतु हूँ—भारतीय कानून (BNS 2023, IPC 1860 और BNSS जमानत नियमों) का सरल सहायक। कृपया अपनी कानूनी समस्या या पुलिस द्वारा लगाई गई धारा (जैसे 323 IPC, 303 BNS या 420 IPC) लिखें ताकि मैं तुरंत सही जानकारी दे सकूँ।';
+        'नमस्ते! मैं बिल्कुल ठीक हूँ और आपकी मदद के लिए तैयार हूँ—आप हिंदी, इंग्लिश या हिंग्लिश में लिख सकते हैं। कृपया बताएं क्या हुआ (जैसे "किसी ने मुझ पर हमला किया", "पड़ोसी से मारपीट", "चोरी धारा 303" या "धोखाधड़ी 420"), मैं तुरंत लागू BNS/IPC धारा, जमानत नियम और अगले कदम बताऊंगा।';
       actions = hasDevanagari
         ? [
-            'बाईं ओर अपनी समस्या या FIR की धारा लिखें (जैसे "पड़ोसी से झगड़ा धारा 323" या "चोरी धारा 303")।',
+            'बाईं ओर अपनी समस्या हिंदी, इंग्लिश या हिंग्लिश में लिखें (जैसे "किसी ने मुझे मारा" या "धारा 323 झगड़ा")।',
             'यदि आपके पास FIR की फोटो है, तो ऊपर "Scan FIR" टैब में अपलोड करके तुरंत धाराएं और जमानत स्थिति जानें।',
             'जेल में बिताए समय के आधार पर अनिवार्य जमानत जांचने के लिए "Bail Check" टैब खोलें।',
           ]
         : [
-            'Type or speak your legal situation or police section on the left (e.g., "Section 323 IPC fight", "theft under Rs 5000", or "Section 420 cheating").',
+            'Ask in English, Hindi, or Hinglish on the left (e.g., "someone attacked me", "kisi ne paise thag liye", or "Section 323 IPC fight").',
             'Have an FIR photo? Switch to the "Scan FIR" tab above to read the sections and bail status automatically.',
             'Need to check 1/3rd mandatory bail or print a court letter? Open the "Bail Check" tab above.',
           ];
       spokenScript =
-        'नमस्ते! मैं न्यायसेतु हूँ और आपकी मदद के लिए तैयार हूँ। कृपया अपनी कानूनी समस्या या एफआईआर की धारा बताएं ताकि मैं जमानत और सही कदम समझा सकूँ।';
+        'नमस्ते! मैं न्यायसेतु हूँ। आप अपनी समस्या हिंदी, इंग्लिश या हिंग्लिश में बता सकते हैं और मैं आपको तुरंत सही कानूनी धारा और जमानत के नियम समझाऊंगा।';
+    } else if (isCyberOrWomenHarassmentQuery) {
+      summaryEn =
+        'Under BNS 2023, stalking (Section 78 BNS / old IPC 354D), criminal force to outrage modesty (Section 74 BNS / old IPC 354), and sexual harassment (Section 75 BNS / old IPC 354A) are strict cognizable offences. Police are legally bound to register a Zero FIR immediately under Section 173 BNSS (recorded by a woman officer), and women are entitled to 100% free legal counsel under Section 12 of the Legal Services Authorities Act (NALSA 15100).';
+      summaryHi =
+        'भारतीय न्याय संहिता (BNS 2023) के तहत पीछा करना/स्टॉकिंग (धारा 78 BNS / पुरानी 354D IPC), छेड़खानी या लज्जा भंग (धारा 74 व 75 BNS / पुरानी 354 IPC) गंभीर अपराध हैं। धारा 173 BNSS के तहत महिला पुलिस अधिकारी द्वारा तुरंत FIR या Zero FIR दर्ज करना अनिवार्य है, और महिलाओं को NALSA 15100 से 100% मुफ्त सरकारी वकील का अधिकार है।';
+      actions = [
+        'Call Emergency 112 or Women Helpline 1091 / 181 immediately if you are in danger, and preserve screenshots, call logs, or witnesses.',
+        'File a Zero FIR at any nearby police station under Section 173 BNSS (you have the right to have your statement recorded by a woman officer).',
+        'Call NALSA Helpline 15100 for a 100% free government lawyer under Section 12(c) of the Legal Services Authorities Act.',
+      ];
+      spokenScript =
+        'भारतीय न्याय संहिता की धारा 74, 75 और 78 के तहत छेड़खानी या पीछा करना गंभीर अपराध है। तुरंत 112 या महिला हेल्पलाइन 1091 पर कॉल करें और नजदीकी थाने में एफआईआर दर्ज कराएं।';
     } else if (isAnticipatoryBailQuery) {
       summaryEn =
         'If you fear arrest in a false or non-bailable FIR, you can apply for Anticipatory Bail before arrest under Section 482 BNSS, 2023 (formerly Section 438 CrPC) before the Sessions Court or High Court. Also, for offences punishable up to 7 years, police must follow Section 35(3) BNSS (Arnesh Kumar notice rule) before arresting.';
@@ -288,21 +311,72 @@ export function analyzeLegalQueryLocally(query: string): {
         'घबराइए मत। पुलिस के लिए गिरफ्तारी की धारा बताना, परिवार को सूचना देना और 24 घंटे के अंदर मजिस्ट्रेट के सामने पेश करना अनिवार्य है। मुफ्त सरकारी वकील के लिए तुरंत 15100 पर कॉल करें।';
     } else {
       summaryEn =
-        'I am NyayaSetu, a focused Indian legal aid helper for BNS 2023, IPC 1860, FIR analysis, and BNSS bail rights. To give you an accurate answer, please describe the legal issue or mention a section number (for example: "neighbor fight 323 IPC", "theft under Rs 5000", "cheating 420", "anticipatory bail", or "police refusing FIR").';
+        'I can help you in English, Hindi, or Hinglish with any police, FIR, assault, theft, fraud, or bail situation. Tell me briefly what happened (e.g., "someone attacked me", "kisi ne paise thag liye", "police bhai ko le gayi", or a section like 323 / 303 / 420) and I will give you the exact BNS 2023 law and next steps.';
       summaryHi =
-        'मैं न्यायसेतु हूँ—भारतीय आपराधिक कानून (BNS 2023, IPC 1860), FIR जांच और जमानत अधिकारों का सहायक। सही कानूनी मदद के लिए कृपया अपनी समस्या या पुलिस धारा लिखें (जैसे: "पड़ोसी से झगड़ा धारा 323", "₹5,000 से कम चोरी", "धोखाधड़ी 420", या "अग्रिम जमानत")।';
+        'मैं हिंदी, इंग्लिश या हिंग्लिश में पुलिस, FIR, मारपीट, चोरी, धोखाधड़ी या जमानत से जुड़ी किसी भी समस्या में आपकी मदद कर सकता हूँ। कृपया संक्षेप में बताएं क्या हुआ (जैसे: "किसी ने मुझ पर हमला किया", "पड़ोसी से झगड़ा", "पैसे ठग लिए", या धारा 323 / 303 / 420)।';
       actions = [
-        'Describe what happened along with any police section number (BNS or IPC) in simple English or Hindi.',
+        'Describe what happened in your own words (English, Hindi, or Hinglish) or mention any BNS/IPC section number.',
         'Or tap one of the 4 quick examples on the left to see an instant legal breakdown.',
         'For urgent live legal advice from a government lawyer, call NALSA Free Legal Aid Helpline 15100.',
       ];
       spokenScript =
-        'मैं न्यायसेतु कानूनी सहायक हूँ। सही जानकारी के लिए कृपया अपनी कानूनी समस्या या पुलिस द्वारा लगाई गई धारा बताएं, या मुफ्त सरकारी वकील के लिए 15100 पर कॉल करें।';
+        'कृपया अपनी कानूनी समस्या हिंदी, इंग्लिश या हिंग्लिश में लिखें, या मुफ्त सरकारी वकील के लिए 15100 पर कॉल करें।';
     }
+  } else if (isVictimPerspective) {
+    const citationListEn = effectiveMatches.map(formatDualCitation).join(', ');
+    const citationListHi = effectiveMatches.map(formatDualCitationHi).join(', ');
+    const hasPhysicalAssault = effectiveMatches.some((m) =>
+      ['bns-115-2', 'bns-117-2', 'bns-118-1', 'bns-109'].includes(m.id)
+    );
+    const hasFraudOrCyber = effectiveMatches.some((m) =>
+      ['bns-318-4', 'bns-316-2'].includes(m.id)
+    );
+
+    summaryEn = `Under BNS 2023, this incident is covered under ${citationListEn} (${effectiveMatches
+      .map((m) => m.title)
+      .join(', ')}).${
+      hasPhysicalAssault
+        ? ' You also have the legal Right of Private Defence (Self-Defence) under Sections 34 to 44 of BNS 2023 (formerly Sections 96–106 IPC) to protect yourself and your property from unlawful harm.'
+        : ''
+    } You have the right to register an immediate FIR (or Zero FIR at any police station) under Section 173 BNSS and receive a free copy of the FIR.`;
+
+    summaryHi = `भारतीय न्याय संहिता (BNS 2023) के तहत यह मामला ${citationListHi} (${effectiveMatches
+      .map((m) => m.hindiTitle)
+      .join(', ')}) के अंतर्गत दंडनीय अपराध है।${
+      hasPhysicalAssault
+        ? ' साथ ही धारा 34 से 44 BNS 2023 (पुरानी धारा 96–106 IPC) के तहत आपको अपनी और अपने परिवार की सुरक्षा के लिए आत्मरक्षा (Right of Private Defence / Self-Defence) का पूरा कानूनी अधिकार है।'
+        : ''
+    } आप धारा 173 BNSS के तहत किसी भी नजदीकी थाने में तुरंत FIR (या Zero FIR) दर्ज करा सकते हैं।`;
+
+    if (hasDevanagari) {
+      actions = [
+        hasPhysicalAssault
+          ? 'तुरंत 112 पर पुलिस को कॉल करें, किसी सरकारी अस्पताल से अपनी चोट की मेडिकल जांच (MLC रिपोर्ट) कराएं और फोटो/गवाह सुरक्षित रखें।'
+          : hasFraudOrCyber
+            ? 'तुरंत साइबर क्राइम हेल्पलाइन 1930 पर कॉल करें (या cybercrime.gov.in पर रिपोर्ट करें) ताकि बैंक ट्रांजैक्शन फ्रीज हो सके।'
+            : 'तुरंत 112 पर कॉल करें और घटना के सबूत (CCTV, फोटो, मैसेज या गवाहों के नाम) सुरक्षित करें।',
+        `नजदीकी थाने में धारा 173 BNSS के तहत ${citationListHi} में लिखित FIR (या Zero FIR) दर्ज कराएं और उसकी मुफ्त रिसीविंग कॉपी लें।`,
+        'मुफ्त कानूनी सलाह या कोर्ट केस में सरकारी वकील की सहायता के लिए NALSA हेल्पलाइन 15100 पर कॉल करें।',
+      ];
+    } else {
+      actions = [
+        hasPhysicalAssault
+          ? 'Call Emergency 112 immediately, get a Medico-Legal Certificate (MLC) injury examination at the nearest government hospital, and preserve photos/CCTV.'
+          : hasFraudOrCyber
+            ? 'Call National Cyber Crime Helpline 1930 immediately (or report on cybercrime.gov.in) to freeze the fraudulent bank/UPI transfer.'
+            : 'Call Police Helpline 112 immediately and preserve all evidence (CCTV footage, photos, call logs, or witness contacts).',
+        `File an FIR (or Zero FIR at any police station) under Section 173 BNSS citing ${citationListEn} and collect your free signed FIR copy.`,
+        'Call NALSA Free Legal Aid Helpline 15100 if police delay FIR registration or if you need a free lawyer.',
+      ];
+    }
+
+    spokenScript = hasPhysicalAssault
+      ? `भारतीय न्याय संहिता के तहत हमला और मारपीट ${citationListHi} में दंडनीय अपराध है, और धारा 34 से 44 बीएनएस आपको आत्मरक्षा का अधिकार देती है। तुरंत 112 पर कॉल करें, सरकारी अस्पताल में मेडिकल जांच कराएं और थाने में एफआईआर दर्ज कराएं।`
+      : `यह मामला ${citationListHi} के तहत दंडनीय अपराध है। आप तुरंत नजदीकी थाने में धारा 173 बीएनएसएस के तहत एफआईआर दर्ज कराएं और मुफ्त कानूनी मदद के लिए 15100 पर कॉल करें।`;
   } else if (overallBailable) {
-    const citationListEn = matches.map(formatDualCitation).join(' and ');
-    const citationListHi = matches.map(formatDualCitationHi).join(' और ');
-    const anyCompoundable = matches.some((m) => m.isCompoundable);
+    const citationListEn = effectiveMatches.map(formatDualCitation).join(' and ');
+    const citationListHi = effectiveMatches.map(formatDualCitationHi).join(' और ');
+    const anyCompoundable = effectiveMatches.some((m) => m.isCompoundable);
 
     summaryEn = `Do not panic. Every section identified (${citationListEn}) is strictly BAILABLE under Schedule I of BNSS 2023. Release on bail is a statutory right directly at the police station under Section 478 BNSS upon executing a personal bond—the police (SHO) cannot legally force detention or refuse station bail.${
       anyCompoundable
@@ -330,9 +404,9 @@ export function analyzeLegalQueryLocally(query: string): {
     spokenScript = `घबराइए मत। ${citationListHi} पूर्णतः जमानती धाराएं हैं। धारा 478 बीएनएसएस के तहत थाने से ही जमानत पाना आपका कानूनी अधिकार है। आप थाने जाकर निजी मुचलका भरकर तुरंत रिहाई करवा सकते हैं।`;
   } else {
     // Non-bailable section(s)
-    const citationListEn = matches.map(formatDualCitation).join(', ');
-    const citationListHi = matches.map(formatDualCitationHi).join(', ');
-    const allArneshEligible = matches.every((m) => m.arneshKumarNoticeApplies);
+    const citationListEn = effectiveMatches.map(formatDualCitation).join(', ');
+    const citationListHi = effectiveMatches.map(formatDualCitationHi).join(', ');
+    const allArneshEligible = effectiveMatches.every((m) => m.arneshKumarNoticeApplies);
 
     const partsEn: string[] = [
       `Stay calm and act step-by-step. ${citationListEn} includes a NON-BAILABLE offence, so the police station cannot grant bail directly—a Regular Bail application must be filed before the ${
