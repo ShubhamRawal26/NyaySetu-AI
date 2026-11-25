@@ -1,5 +1,10 @@
+/**
+ * @fileoverview Automated unit, security, and HTTP integration test suite for NyayaSetu AI.
+ */
+
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import type { AddressInfo } from 'node:net';
 import {
   BNS_STATUTORY_CATALOG,
   calculateSection479,
@@ -11,10 +16,7 @@ import {
   generateBailDossierLocally,
   parseFirOcrTextLocally,
 } from '../src/shared/localLegalEngine.ts';
-import {
-  hasValidFileSignature,
-  sanitizeInputText,
-} from '../server.ts';
+import { createApiApp, hasValidFileSignature, sanitizeInputText } from '../server.ts';
 
 test('BNS/IPC Statutory Catalog contains 16 verified sections with required fields', () => {
   assert.equal(BNS_STATUTORY_CATALOG.length, 16);
@@ -39,7 +41,6 @@ test('findCatalogSection resolves exact BNS, bare subsection, and legacy IPC cit
   assert.equal(s420.bnsSection, '318(4) BNS');
   assert.equal(s420.isBailable, false);
 
-  // Must not false-match 185 BNS to 85 BNS or 2323 IPC to 323 IPC
   assert.equal(findCatalogSection('185 BNS'), undefined);
   assert.equal(findCatalogSection('2323 IPC'), undefined);
 });
@@ -52,14 +53,10 @@ test('detectSectionsFromText detects English, Hindi Devanagari, Indic digits, an
   assert.ok(hindiBns.includes('115(2) BNS'));
   assert.ok(hindiBns.includes('351(2) BNS'));
 
-  const hinglishAttack = detectSectionsFromText(
-    'bhai padosi ne mujh par attack kiya aur maara peeta'
-  );
+  const hinglishAttack = detectSectionsFromText('bhai padosi ne mujh par attack kiya aur maara peeta');
   assert.ok(hinglishAttack.some((s) => s.bnsSection === '115(2) BNS'));
 
-  const hinglishFraud = detectSectionsFromText(
-    'mere saath online otp scam aur dhokadhadi hui hai'
-  );
+  const hinglishFraud = detectSectionsFromText('mere saath online otp scam aur dhokadhadi hui hai');
   assert.ok(hinglishFraud.some((s) => s.bnsSection === '318(4) BNS'));
 });
 
@@ -94,27 +91,15 @@ test('calculateSection479 computes 1/3rd first-time offender and 1/2 general und
 });
 
 test('analyzeLegalQueryLocally handles victim attack/self-defence, petty theft < Rs 5000, Hinglish arrest, and greetings', () => {
-  const victimAttack = analyzeLegalQueryLocally(
-    'What should I do if someone attack on me?'
-  );
+  const victimAttack = analyzeLegalQueryLocally('What should I do if someone attack on me?');
   assert.ok(victimAttack.advisory.detected_sections.length > 0);
-  assert.match(
-    victimAttack.advisory.empathetic_summary_en,
-    /Self-Defence|Sections 34 to 44 BNS/i
-  );
+  assert.match(victimAttack.advisory.empathetic_summary_en, /Self-Defence|Sections 34 to 44 BNS/i);
 
   const pettyTheft = analyzeLegalQueryLocally(
     'Police arrested Ramesh for stealing a bicycle worth Rs 3500 under Section 303 BNS. First mistake.'
   );
-  assert.ok(
-    pettyTheft.advisory.detected_sections.some(
-      (s) => s.bns_section === '303(2) BNS'
-    )
-  );
-  assert.match(
-    pettyTheft.advisory.empathetic_summary_en,
-    /303\(2\) BNS|Community Service/i
-  );
+  assert.ok(pettyTheft.advisory.detected_sections.some((s) => s.bns_section === '303(2) BNS'));
+  assert.match(pettyTheft.advisory.empathetic_summary_en, /303\(2\) BNS|Community Service/i);
 
   const greeting = analyzeLegalQueryLocally('hi how are you bro');
   assert.equal(greeting.advisory.detected_sections.length, 0);
@@ -152,18 +137,14 @@ test('parseFirOcrTextLocally and generateBailDossierLocally produce valid struct
     undergoneDays: 420,
     isFirstTimeOffender: true,
   });
-  assert.match(
-    dossierResult.dossier_text,
-    /SECTION 479 OF THE BHARATIYA NAGARIK SURAKSHA SANHITA/i
-  );
+  assert.match(dossierResult.dossier_text, /SECTION 479 OF THE BHARATIYA NAGARIK SURAKSHA SANHITA/i);
   assert.match(dossierResult.dossier_text, /Ramesh Kumar/);
   assert.match(dossierResult.dossier_text, /0142\/2026/);
   assert.equal(dossierResult.calculation.isEligible, true);
 });
 
 test('Security helpers sanitize control characters and validate binary magic-byte signatures', () => {
-  const dirty = 'Hello\u0000\u0007World   ';
-  assert.equal(sanitizeInputText(dirty, 100), 'HelloWorld');
+  assert.equal(sanitizeInputText('Hello\u0000\u0007World   ', 100), 'HelloWorld');
 
   const validJpegBase64 = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]).toString('base64');
   const validPngBase64 = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]).toString('base64');
@@ -175,4 +156,68 @@ test('Security helpers sanitize control characters and validate binary magic-byt
   assert.equal(hasValidFileSignature(validPdfBase64, 'application/pdf'), true);
   assert.equal(hasValidFileSignature(spoofedExeBase64, 'image/jpeg'), false);
   assert.equal(hasValidFileSignature(spoofedExeBase64, 'application/pdf'), false);
+});
+
+test('Express HTTP API integration verifies health, CSP headers, legal-aid, bail-dossier, and spoofed upload rejection', async () => {
+  const app = createApiApp();
+  const server = await new Promise<ReturnType<typeof app.listen>>((resolve) => {
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
+  });
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const healthRes = await fetch(`${baseUrl}/api/health`);
+    assert.equal(healthRes.status, 200);
+    const csp = healthRes.headers.get('content-security-policy') || '';
+    assert.match(csp, /worker-src 'self' blob:/);
+    assert.match(csp, /frame-ancestors \*/);
+    const healthJson = (await healthRes.json()) as { status: string };
+    assert.equal(healthJson.status, 'ok');
+
+    const aidRes = await fetch(`${baseUrl}/api/legal-aid`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'Police arrested my brother under Section 323 IPC' }),
+    });
+    assert.equal(aidRes.status, 200);
+    const aidJson = (await aidRes.json()) as { advisory: { overall_bailable: boolean } };
+    assert.equal(aidJson.advisory.overall_bailable, true);
+
+    const spoofedRes = await fetch(`${baseUrl}/api/fir-ocr`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        imageBase64: Buffer.from('not-a-real-jpeg').toString('base64'),
+        mimeType: 'image/jpeg',
+      }),
+    });
+    assert.equal(spoofedRes.status, 400);
+
+    const dossierRes = await fetch(`${baseUrl}/api/bail-dossier`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        accusedName: 'Ramesh Kumar',
+        firNumber: '0142/2026',
+        policeStation: 'Kotwali Nagar',
+        district: 'Lucknow',
+        bnsSection: '303(2) BNS',
+        ipcSection: '379 IPC',
+        offenceTitle: 'Theft',
+        maxPunishmentMonths: 36,
+        undergoneDays: 400,
+        isFirstTimeOffender: true,
+      }),
+    });
+    assert.equal(dossierRes.status, 200);
+    const dossierJson = (await dossierRes.json()) as { calculation: { isEligible: boolean } };
+    assert.equal(dossierJson.calculation.isEligible, true);
+
+    const notFoundRes = await fetch(`${baseUrl}/api/unknown-route`);
+    assert.equal(notFoundRes.status, 404);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });

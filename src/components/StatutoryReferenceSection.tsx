@@ -1,17 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import {
-  ArrowUpRight,
-  Clock,
-  FileText,
-  PhoneCall,
-  Search,
-  ShieldCheck,
-} from 'lucide-react';
+import { ArrowUpRight, Clock, FileText, PhoneCall, Search, ShieldCheck } from 'lucide-react';
 import { BNS_STATUTORY_CATALOG } from '../shared/bnsCatalog';
-import type {
-  BailTransferPayload,
-  StatutorySectionRecord,
-} from '../types/legal';
+import type { BailTransferPayload, StatutorySectionRecord } from '../types/legal';
 
 interface StatutoryReferenceSectionProps {
   onAskAboutSection: (section: StatutorySectionRecord) => void;
@@ -53,9 +43,10 @@ const KEY_RIGHTS = [
   },
 ];
 
-export const StatutoryReferenceSection: React.FC<
-  StatutoryReferenceSectionProps
-> = ({ onAskAboutSection, onCalculateSectionBail }) => {
+export const StatutoryReferenceSection: React.FC<StatutoryReferenceSectionProps> = ({
+  onAskAboutSection,
+  onCalculateSectionBail,
+}) => {
   const [search, setSearch] = useState('');
   const [showAll, setShowAll] = useState(false);
 
@@ -71,7 +62,6 @@ export const StatutoryReferenceSection: React.FC<
             item.keywords.some((k) => k.includes(q))
         )
       : BNS_STATUTORY_CATALOG;
-
     return q || showAll ? list : list.slice(0, 6);
   }, [search, showAll]);
 
@@ -81,11 +71,9 @@ export const StatutoryReferenceSection: React.FC<
       className="no-print scroll-mt-20 border-t border-[#E4E4D0] bg-[#FFFFEB] py-14 sm:py-16 lg:py-20"
     >
       <div className="mx-auto max-w-[1280px] px-5 sm:px-8 lg:px-12 space-y-16 lg:space-y-20">
-        {/* 4 Color-Blocked Rights Cards with Crisp SVG Icons */}
         <div>
           <h2 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-[#1A1A1A]">
-            Four rights every citizen{' '}
-            <span className="font-editorial-italic">has.</span>
+            Four rights every citizen <span className="font-editorial-italic">has.</span>
           </h2>
 
           <div className="mt-7 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
@@ -103,12 +91,8 @@ export const StatutoryReferenceSection: React.FC<
                     </span>
                   </div>
                   <div>
-                    <h3 className="font-display text-lg font-bold leading-snug">
-                      {item.title}
-                    </h3>
-                    <p className={`mt-2 text-sm leading-relaxed ${item.mutedClass}`}>
-                      {item.summary}
-                    </p>
+                    <h3 className="font-display text-lg font-bold leading-snug">{item.title}</h3>
+                    <p className={`mt-2 text-sm leading-relaxed ${item.mutedClass}`}>{item.summary}</p>
                   </div>
                 </div>
               );
@@ -116,14 +100,15 @@ export const StatutoryReferenceSection: React.FC<
           </div>
         </div>
 
-        {/* Simple Searchable Common Sections Table */}
         <div>
           <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <h2 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-[#1A1A1A]">
-                Common police sections{' '}
-                <span className="font-editorial-italic">(BNS &amp; IPC).</span>
+                Common police sections <span className="font-editorial-italic">(BNS &amp; IPC).</span>
               </h2>
+              <p id="section-search-helper" className="sr-only">
+                Filter sections by BNS 2023 number, old IPC 1860 number, or offence keyword.
+              </p>
             </div>
 
             <div className="relative w-full sm:w-72">
@@ -137,22 +122,29 @@ export const StatutoryReferenceSection: React.FC<
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search 323, 379, 420, theft..."
                 aria-label="Search police sections"
+                aria-describedby="section-search-helper"
                 className="min-h-[42px] w-full rounded-xl border-2 border-[#1A1A1A] bg-[#F6F6E0] pl-10 pr-3.5 py-2 text-sm text-[#1A1A1A] placeholder:text-[#8C8C80] focus:outline-none focus:ring-2 focus:ring-[#0041CA]"
               />
             </div>
           </div>
 
-          <div className="mt-6 ink-card overflow-hidden rounded-[24px] bg-[#F6F6E0]">
-            {/* Desktop Column Header */}
-            <div className="hidden md:grid md:grid-cols-12 md:items-center gap-4 border-b-2 border-[#1A1A1A] bg-[#FFFFEB] px-6 py-3.5 text-xs font-bold text-[#4A4A43]">
-              <div className="col-span-2">New BNS</div>
-              <div className="col-span-2">Old IPC</div>
-              <div className="col-span-4">Offence</div>
-              <div className="col-span-2">Bail</div>
-              <div className="col-span-2 text-right">Action</div>
+          <div
+            role="table"
+            aria-label="BNS 2023 and old IPC 1860 common police sections"
+            className="mt-6 ink-card overflow-hidden rounded-[24px] bg-[#F6F6E0]"
+          >
+            <div
+              role="row"
+              className="hidden md:grid md:grid-cols-12 md:items-center gap-4 border-b-2 border-[#1A1A1A] bg-[#FFFFEB] px-6 py-3.5 text-xs font-bold text-[#4A4A43]"
+            >
+              <div role="columnheader" className="col-span-2">New BNS</div>
+              <div role="columnheader" className="col-span-2">Old IPC</div>
+              <div role="columnheader" className="col-span-4">Offence</div>
+              <div role="columnheader" className="col-span-2">Bail</div>
+              <div role="columnheader" className="col-span-2 text-right">Action</div>
             </div>
 
-            <div className="divide-y divide-[#E4E4D0]">
+            <div role="rowgroup" className="divide-y divide-[#E4E4D0]">
               {filteredSections.length === 0 ? (
                 <div className="px-6 py-10 text-center text-sm text-[#4A4A43]">
                   No sections matched “{search}”.
@@ -161,23 +153,24 @@ export const StatutoryReferenceSection: React.FC<
                 filteredSections.map((item) => (
                   <div
                     key={item.id}
+                    role="row"
                     className="grid grid-cols-1 gap-2 px-5 py-4 sm:px-6 hover:bg-[#FFFFEB] transition-colors md:grid-cols-12 md:items-center md:gap-4 text-xs sm:text-sm"
                   >
                     <div className="flex items-center justify-between gap-2 md:contents">
-                      <div className="md:col-span-2 font-mono font-bold text-[#0041CA] tabular-nums">
+                      <div role="cell" className="md:col-span-2 font-mono font-bold text-[#0041CA] tabular-nums">
                         {item.bnsSection}
                       </div>
-                      <div className="md:col-span-2 font-mono text-[#4A4A43] tabular-nums">
+                      <div role="cell" className="md:col-span-2 font-mono text-[#4A4A43] tabular-nums">
                         {item.ipcSection}
                       </div>
                     </div>
 
-                    <div className="md:col-span-4 font-medium leading-snug text-[#1A1A1A]">
+                    <div role="cell" className="md:col-span-4 font-medium leading-snug text-[#1A1A1A]">
                       {item.title}
                     </div>
 
                     <div className="flex items-center justify-between pt-1.5 md:pt-0 md:contents">
-                      <div className="md:col-span-2 font-bold text-xs">
+                      <div role="cell" className="md:col-span-2 font-bold text-xs">
                         {item.isBailable ? (
                           <span className="text-[#034F46]">Bailable</span>
                         ) : (
@@ -185,7 +178,7 @@ export const StatutoryReferenceSection: React.FC<
                         )}
                       </div>
 
-                      <div className="md:col-span-2 md:text-right">
+                      <div role="cell" className="md:col-span-2 md:text-right">
                         <div className="inline-flex items-center gap-3.5">
                           <button
                             type="button"
@@ -225,9 +218,7 @@ export const StatutoryReferenceSection: React.FC<
                 onClick={() => setShowAll((v) => !v)}
                 className="btn-cream inline-flex min-h-[42px] items-center px-5 py-2 text-xs sm:text-sm font-semibold rounded-xl cursor-pointer whitespace-nowrap"
               >
-                {showAll
-                  ? 'Show fewer sections'
-                  : `Show all ${BNS_STATUTORY_CATALOG.length} sections`}
+                {showAll ? 'Show fewer sections' : `Show all ${BNS_STATUTORY_CATALOG.length} sections`}
               </button>
             </div>
           )}
