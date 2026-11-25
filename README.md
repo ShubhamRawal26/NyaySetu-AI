@@ -109,15 +109,61 @@ NyayaSetu AI delivers an end-to-end citizen workflow across **four integrated mo
 ```text
 Browser (React 19 + Tailwind CSS v4 + ErrorBoundary)
    │
-   ├── Ask Help (LegalFirstAidPanel) ────────► POST /api/legal-aid ──┐
-   │       └── Listen Audio ─────────────────► Browser Speech / TTS ─┤
-   ├── Scan FIR (FirScannerPanel + Canvas) ──► POST /api/fir-ocr ────┼──► Express 4 App Factory (server.ts)
-   ├── Bail Check (BailEnginePanel) ─────────► POST /api/bail-dossier┘        │
-   └── Directory (StatutoryReferenceSection) ──► Deterministic                ├── src/server/securityMiddleware.ts
-                                                 bnsCatalog.ts                ├── src/server/geminiService.ts
-                                                                              ├── src/shared/localLegalEngine.ts
-                                                                              ├── src/shared/firOcrParser.ts
-                                                                              └── src/shared/bailDossierBuilder.ts
+   ├── Ask Help (LegalFirstAidPanel + LegalAdvisoryResultCard + useSpeechAssistant) ──► POST /api/legal-aid ──┐
+   ├── Scan FIR (FirScannerPanel + FirAnalysisResultCard + imageOptimizer) ───────────► POST /api/fir-ocr ────┼──► Express 4 App Factory (server.ts)
+   ├── Bail Check (BailEnginePanel + BailPetitionPreview) ────────────────────────────► POST /api/bail-dossier┘
+   └── Directory (StatutoryReferenceSection + Footer + NalsaHelpModal)
+```
+
+### Repository Layout (All 35 TypeScript/TSX Modules `<= 242 LOC`)
+
+```text
+├── server.ts                                    # Express 4 app factory (createApiApp) & server entrypoint
+├── vite.config.ts                               # Vite 8 + Rolldown vendor chunk splitting config
+├── Dockerfile                                   # Non-root production container with /api/health check
+├── cloudbuild.yaml                              # Google Cloud Build -> Artifact Registry -> Cloud Run pipeline
+├── src/
+│   ├── main.tsx                                 # React 19 root wrapped in <StrictMode> & <ErrorBoundary>
+│   ├── App.tsx                                  # Top-level workspace layout & WAI-ARIA tablist controller
+│   ├── types/
+│   │   └── legal.ts                             # JSDoc-documented domain contracts & API interfaces
+│   ├── hooks/
+│   │   └── useSpeechAssistant.ts                # Web Speech API voice input & bilingual TTS synthesis hook
+│   ├── utils/
+│   │   ├── apiClient.ts                         # Typed POST helper with retry & jittered backoff
+│   │   └── imageOptimizer.ts                    # HTML5 Canvas client-side FIR image downscaler
+│   ├── components/
+│   │   ├── ErrorBoundary.tsx                    # Crash-resilient fallback UI with NALSA 15100 helpline
+│   │   ├── Navbar.tsx                           # Responsive top bar with 1-click NALSA 15100 trigger
+│   │   ├── HeroSection.tsx                      # Editorial hero with quick-action CTAs
+│   │   ├── LegalFirstAidPanel.tsx               # Ask Help query composer & quick-scenario launcher
+│   │   ├── LegalAdvisoryResultCard.tsx          # Bilingual EN/HI advisory card, section badges & TTS controls
+│   │   ├── FirScannerPanel.tsx                  # Scan FIR upload dropzone & sample FIR loader
+│   │   ├── FirAnalysisResultCard.tsx            # Extracted FIR metadata & IPC-to-BNS 2023 bail verdict card
+│   │   ├── BailEnginePanel.tsx                  # 3-step Section 479 BNSS detention calculator form
+│   │   ├── BailPetitionPreview.tsx              # Waveform threshold gauge & printable court bail petition
+│   │   ├── StatutoryReferenceSection.tsx        # 4 Citizen Rights cards & ARIA searchable BNS/IPC table
+│   │   ├── NalsaHelpModal.tsx                   # Accessible modal for 24x7 NALSA 15100 free legal aid
+│   │   └── Footer.tsx                           # Editorial footer with statutory disclaimer
+│   ├── shared/
+│   │   ├── constants.ts                         # Named domain, cache, upload, and rate-limit constants
+│   │   ├── bnsCatalog.ts                        # BNS/IPC lookup engine & Section 479 BNSS math
+│   │   ├── localLegalEngine.ts                  # Multilingual query orchestrator (analyzeLegalQueryLocally)
+│   │   ├── legalTextExtractors.ts               # Custody duration, sentence & dual-citation extractors
+│   │   ├── legalAdvisoryTemplates.ts            # Victim, bailable & non-bailable bilingual copy builders
+│   │   ├── legalFallbackTemplates.ts            # Section 479, Zero FIR, anticipatory bail & greeting builders
+│   │   ├── firOcrParser.ts                      # Deterministic FIR OCR regex parser & Sec. 303(2) detector
+│   │   ├── bailDossierBuilder.ts                # Court-formatted Section 479/480 BNSS petition generator
+│   │   └── data/
+│   │       ├── bnsSectionsData.ts               # Body, hurt, public peace & road safety BNS/IPC records
+│   │       ├── bnsPropertySectionsData.ts       # Property, theft, fraud & family safeguard BNS/IPC records
+│   │       └── hinglishKeywordMap.ts            # Devanagari numeral map & 350+ Hindi/Hinglish keyword lexicon
+│   └── server/
+│       ├── securityMiddleware.ts                # Iframe/WASM-safe CSP, rate limiter, sanitizer & magic-byte guard
+│       ├── geminiService.ts                     # @google/genai structured JSON enrichment + 10-min circuit breaker
+│       └── ocrAndCacheService.ts                # Bounded 5-min TTL LRU cache & lazy Tesseract.js worker singleton
+└── tests/
+    └── nyayasetu.test.ts                        # 8 automated unit, security & live Express HTTP integration suites
 ```
 
 ---
