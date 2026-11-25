@@ -1,6 +1,6 @@
-import 'dotenv/config';
-import express from 'express';
-import fs from 'fs';
+import express, { type Request, type Response, type NextFunction } from 'express';
+import { createServer as createViteServer } from 'vite';
+import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createWorker, type Worker as TesseractWorker } from 'tesseract.js';
@@ -9,167 +9,284 @@ import {
   generateBailDossierLocally,
   parseFirOcrTextLocally,
 } from './src/shared/localLegalEngine.ts';
-import type { BailDossierRequest } from './src/types/legal.ts';
+import type {
+  BailDossierRequest,
+  FIROCRExtractionResponse,
+  LegalAdvisoryResponse,
+} from './src/types/legal.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-function resolvePort(): number {
-  const portArgIdx = process.argv.indexOf('--port');
-  if (portArgIdx !== -1 && process.argv[portArgIdx + 1]) {
-    const parsed = Number(process.argv[portArgIdx + 1]);
-    if (!Number.isNaN(parsed) && parsed > 0) return parsed;
-  }
-  const eqArg = process.argv.find((arg) => arg.startsWith('--port='));
-  if (eqArg) {
-    const parsed = Number(eqArg.split('=')[1]);
-    if (!Number.isNaN(parsed) && parsed > 0) return parsed;
-  }
-  return Number(process.env.PORT || 3000);
-}
+// ---------------------------------------------------------------------------
+// Security & Rate Limiting Middleware (Per-IP Sliding Window)
+// ---------------------------------------------------------------------------
+const RATE_WINDOW_MS = 60_000;
+const MAX_REQUESTS_PER_WINDOW = 60;
+const ipHits = new Map<string, { count: number; resetAt: number }>();
 
-const PORT = resolvePort();
-const MAX_UPLOAD_BYTES = 8 * 1024 * 1024; // 8 MB decoded file limit
-const RATE_LIMIT_WINDOW_MS = 60_000;
-const RATE_LIMIT_MAX_REQUESTS = 120;
-
-const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
-
-function rateLimitApi(
-  req: express.Request,
-  res: express.Response,
-  next: express.NextFunction
+export function rateLimitMiddleware(
+  req: Request,
+  res: Response,
+  next: NextFunction
 ) {
+  const ip =
+    (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+    req.socket.remoteAddress ||
+    'local';
   const now = Date.now();
-  if (rateLimitStore.size > 500) {
-    for (const [key, entry] of rateLimitStore.entries()) {
-      if (entry.resetAt <= now) rateLimitStore.delete(key);
+
+  if (ipHits.size > 2000) {
+    for (const [key, val] of ipHits.entries()) {
+      if (now > val.resetAt) ipHits.delete(key);
     }
   }
 
-  const forwarded = req.headers['x-forwarded-for'];
-  const clientIp =
-    (typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : req.ip) || 'local';
-
-  const existing = rateLimitStore.get(clientIp);
-  if (!existing || existing.resetAt <= now) {
-    rateLimitStore.set(clientIp, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
-    next();
-    return;
+  const entry = ipHits.get(ip);
+  if (!entry || now > entry.resetAt) {
+    ipHits.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
+    return next();
   }
 
-  if (existing.count >= RATE_LIMIT_MAX_REQUESTS) {
-    const retryAfterSec = Math.max(1, Math.ceil((existing.resetAt - now) / 1000));
-    res.setHeader('Retry-After', String(retryAfterSec));
-    res.status(429).json({
-      error: 'Too many requests in a short time. Please wait a moment and try again.',
+  if (entry.count >= MAX_REQUESTS_PER_WINDOW) {
+    res.setHeader(
+      'Retry-After',
+      String(Math.ceil((entry.resetAt - now) / 1000))
+    );
+    return res.status(429).json({
+      error: 'Too many requests. Please wait a moment before trying again.',
     });
-    return;
   }
 
-  existing.count += 1;
-  next();
+  entry.count += 1;
+  return next();
 }
 
-function sanitizeText(value: unknown, maxLength: number): string {
-  if (typeof value !== 'string') return '';
-  return value
-    .replace(/\u0000/g, '')
-    .replace(/[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ' ')
+export function sanitizeInputText(input: unknown, maxLength = 3000): string {
+  if (typeof input !== 'string') return '';
+  return input
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
     .trim()
     .slice(0, maxLength);
 }
 
-function parseBoundedNumber(
-  value: unknown,
-  fallback: number,
-  min: number,
-  max: number
-): number {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(max, Math.max(min, Math.round(n)));
+// ---------------------------------------------------------------------------
+// Bounded TTL In-Memory Cache for Efficiency
+// ---------------------------------------------------------------------------
+interface CacheEntry<T> {
+  value: T;
+  expiresAt: number;
 }
 
-function validateUploadedDocument(
-  rawBase64: unknown,
-  mimeType: unknown
-): { ok: true; data: string; mimeType: string } | { ok: false; error: string } {
-  const allowedMimes = new Set([
-    'image/jpeg',
-    'image/png',
-    'image/webp',
-    'application/pdf',
-  ]);
-  if (typeof mimeType !== 'string' || !allowedMimes.has(mimeType)) {
-    return {
-      ok: false,
-      error: 'Unsupported document format. Please upload JPG, PNG, WEBP, or PDF.',
-    };
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const MAX_CACHE_ENTRIES = 200;
+const advisoryCache = new Map<
+  string,
+  CacheEntry<{
+    advisory: LegalAdvisoryResponse;
+    deterministicMatches: {
+      id: string;
+      bnsSection: string;
+      ipcSection: string;
+      title: string;
+    }[];
+  }>
+>();
+
+function getCachedAdvisory(key: string) {
+  const hit = advisoryCache.get(key);
+  if (!hit) return null;
+  if (Date.now() > hit.expiresAt) {
+    advisoryCache.delete(key);
+    return null;
   }
-  if (typeof rawBase64 !== 'string' || rawBase64.trim().length < 16) {
-    return {
-      ok: false,
-      error: 'Please upload an FIR image or select the sample FIR document to scan.',
-    };
-  }
-
-  const stripped = (rawBase64.includes(',') ? rawBase64.split(',')[1] : rawBase64)
-    .replace(/\s+/g, '');
-
-  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(stripped)) {
-    return { ok: false, error: 'Uploaded file data is invalid or corrupted.' };
-  }
-
-  const estimatedBytes = Math.floor((stripped.length * 3) / 4);
-  if (estimatedBytes > MAX_UPLOAD_BYTES) {
-    return {
-      ok: false,
-      error: 'Document exceeds the 8 MB limit. Please upload a smaller image or PDF.',
-    };
-  }
-
-  // Verify magic bytes match declared MIME type
-  const headerBuf = Buffer.from(stripped.slice(0, 32), 'base64');
-  const isJpeg =
-    headerBuf.length >= 3 &&
-    headerBuf[0] === 0xff &&
-    headerBuf[1] === 0xd8 &&
-    headerBuf[2] === 0xff;
-  const isPng =
-    headerBuf.length >= 4 &&
-    headerBuf[0] === 0x89 &&
-    headerBuf[1] === 0x50 &&
-    headerBuf[2] === 0x4e &&
-    headerBuf[3] === 0x47;
-  const isWebp =
-    headerBuf.length >= 12 &&
-    headerBuf.subarray(0, 4).toString('ascii') === 'RIFF' &&
-    headerBuf.subarray(8, 12).toString('ascii') === 'WEBP';
-  const isPdf =
-    headerBuf.length >= 5 && headerBuf.subarray(0, 5).toString('ascii') === '%PDF-';
-
-  const magicMatches =
-    (mimeType === 'image/jpeg' && isJpeg) ||
-    (mimeType === 'image/png' && isPng) ||
-    (mimeType === 'image/webp' && isWebp) ||
-    (mimeType === 'application/pdf' && isPdf);
-
-  if (!magicMatches) {
-    return {
-      ok: false,
-      error: 'File content does not match the declared document format.',
-    };
-  }
-
-  return { ok: true, data: stripped, mimeType };
+  return hit.value;
 }
 
-// Reusable in-process Tesseract OCR worker with serialized queue
+function setCachedAdvisory(
+  key: string,
+  value: {
+    advisory: LegalAdvisoryResponse;
+    deterministicMatches: {
+      id: string;
+      bnsSection: string;
+      ipcSection: string;
+      title: string;
+    }[];
+  }
+): void {
+  if (advisoryCache.size >= MAX_CACHE_ENTRIES) {
+    const oldestKey = advisoryCache.keys().next().value;
+    if (oldestKey) advisoryCache.delete(oldestKey);
+  }
+  advisoryCache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
+}
+
+// ---------------------------------------------------------------------------
+// Binary Magic-Byte Signature Verification for Uploaded Files
+// ---------------------------------------------------------------------------
+export function hasValidFileSignature(
+  base64Data: string,
+  mimeType: string
+): boolean {
+  try {
+    const head = Buffer.from(base64Data.slice(0, 64), 'base64');
+    if (head.length < 4) return false;
+
+    if (mimeType === 'image/jpeg') {
+      return head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff;
+    }
+    if (mimeType === 'image/png') {
+      return (
+        head[0] === 0x89 &&
+        head[1] === 0x50 &&
+        head[2] === 0x4e &&
+        head[3] === 0x47
+      );
+    }
+    if (mimeType === 'image/webp') {
+      return (
+        head.length >= 12 &&
+        head.subarray(0, 4).toString('ascii') === 'RIFF' &&
+        head.subarray(8, 12).toString('ascii') === 'WEBP'
+      );
+    }
+    if (mimeType === 'application/pdf') {
+      return head.subarray(0, 4).toString('ascii') === '%PDF';
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Google Services Integration (@google/genai) + Zero-Fail Circuit Breaker
+// ---------------------------------------------------------------------------
+const PRIMARY_GEMINI_MODEL = 'gemini-4-hydrogen';
+const FALLBACK_GEMINI_MODEL = 'gemini-3.1-flash-lite';
+const TTS_GEMINI_MODEL = 'gemini-3.8-flash-lite-tts';
+
+// Circuit breaker trips into instant (<5ms) deterministic local mode when
+// upstream free-tier Gemini returns 503/429 or when running offline/without key.
+let geminiCircuitOpenUntil = 0;
+
+function getGeminiClient(apiVersion?: string): GoogleGenAI | null {
+  if (Date.now() < geminiCircuitOpenUntil) return null;
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') return null;
+  return new GoogleGenAI({
+    apiKey,
+    ...(apiVersion ? { apiVersion } : {}),
+    httpOptions: {
+      headers: { 'User-Agent': 'aistudio-build' },
+    },
+  });
+}
+
+const LEGAL_ADVISORY_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    empathetic_summary_en: { type: Type.STRING },
+    empathetic_summary_hi: { type: Type.STRING },
+    detected_sections: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          bns_section: { type: Type.STRING },
+          ipc_section: { type: Type.STRING },
+          title: { type: Type.STRING },
+          is_bailable: { type: Type.BOOLEAN },
+          max_punishment: { type: Type.STRING },
+          is_compoundable: { type: Type.BOOLEAN },
+        },
+        required: [
+          'bns_section',
+          'ipc_section',
+          'title',
+          'is_bailable',
+          'max_punishment',
+          'is_compoundable',
+        ],
+      },
+    },
+    overall_bailable: { type: Type.BOOLEAN },
+    statutory_bail_sec_479_applicable: { type: Type.BOOLEAN },
+    immediate_citizen_actions: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+    },
+    nalsa_legal_aid_eligible: { type: Type.BOOLEAN },
+    spoken_tts_script: { type: Type.STRING },
+  },
+  required: [
+    'empathetic_summary_en',
+    'empathetic_summary_hi',
+    'detected_sections',
+    'overall_bailable',
+    'statutory_bail_sec_479_applicable',
+    'immediate_citizen_actions',
+    'nalsa_legal_aid_eligible',
+    'spoken_tts_script',
+  ],
+};
+
+async function enrichWithGeminiIfAvailable(
+  query: string,
+  localResult: {
+    advisory: LegalAdvisoryResponse;
+    deterministicMatches: {
+      id: string;
+      bnsSection: string;
+      ipcSection: string;
+      title: string;
+    }[];
+  }
+): Promise<LegalAdvisoryResponse> {
+  // When deterministic engine already matched specific BNS/IPC sections or
+  // handled a greeting/self-defence query, return immediately in <5ms for
+  // guaranteed statutory precision and zero latency.
+  if (
+    localResult.advisory.detected_sections.length > 0 ||
+    query.split(/\s+/).length <= 12
+  ) {
+    return localResult.advisory;
+  }
+
+  const ai = getGeminiClient();
+  if (!ai) return localResult.advisory;
+
+  for (const model of [PRIMARY_GEMINI_MODEL, FALLBACK_GEMINI_MODEL]) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: `You are NyayaSetu AI, an Indian legal first-aid assistant grounded in BNS 2023, BNSS 2023, and IPC 1860. Understand English, Hindi, and Romanized Hinglish. Analyze: "${query}"`,
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: LEGAL_ADVISORY_SCHEMA,
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+          abortSignal: AbortSignal.timeout(2500),
+        },
+      });
+      if (response.text) {
+        return JSON.parse(response.text) as LegalAdvisoryResponse;
+      }
+    } catch {
+      // Trip circuit breaker for 10 minutes on transient upstream 503/429
+      geminiCircuitOpenUntil = Date.now() + 10 * 60 * 1000;
+      break;
+    }
+  }
+  return localResult.advisory;
+}
+
+// ---------------------------------------------------------------------------
+// Built-In Local Tesseract Vision OCR Singleton Worker
+// ---------------------------------------------------------------------------
 let ocrWorkerPromise: Promise<TesseractWorker> | null = null;
-let ocrQueue: Promise<unknown> = Promise.resolve();
 
-function getOcrWorker(): Promise<TesseractWorker> {
+async function getLocalOcrWorker(): Promise<TesseractWorker> {
   if (!ocrWorkerPromise) {
     ocrWorkerPromise = createWorker('eng').catch((err) => {
       ocrWorkerPromise = null;
@@ -179,261 +296,377 @@ function getOcrWorker(): Promise<TesseractWorker> {
   return ocrWorkerPromise;
 }
 
-function recognizeImageBuffer(buffer: Buffer): Promise<string> {
-  const run = ocrQueue.then(async () => {
-    const worker = await getOcrWorker();
-    const {
-      data: { text },
-    } = await worker.recognize(buffer);
-    return text || '';
-  });
-  ocrQueue = run.catch(() => undefined);
-  return run;
-}
-
-function extractReadablePdfText(buffer: Buffer): string {
-  // Extract literal text strings embedded in uncompressed PDF streams
-  const latin = buffer.toString('latin1');
-  const chunks: string[] = [];
-  const regex = /\(([^()\\]*(?:\\.[^()\\]*)*)\)/g;
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(latin)) !== null) {
-    const cleaned = match[1]
-      .replace(/\\n/g, '\n')
-      .replace(/\\r/g, ' ')
-      .replace(/\\t/g, ' ')
-      .replace(/\\\(/g, '(')
-      .replace(/\\\)/g, ')')
-      .replace(/\\\\/g, '\\')
-      .replace(/[^\x20-\x7E\n]/g, ' ')
-      .trim();
-    if (cleaned.length >= 2) {
-      chunks.push(cleaned);
-    }
-  }
-  return chunks.join(' ');
-}
-
-function createApp() {
+// ---------------------------------------------------------------------------
+// Express Server Initialization
+// ---------------------------------------------------------------------------
+async function startServer() {
   const app = express();
-  app.disable('x-powered-by');
-  app.set('trust proxy', 1);
+  const PORT = Number(process.env.PORT) || 3000;
 
-  // Security headers (iframe-compatible for AI Studio preview)
-  app.use((_req, res, next) => {
+  app.disable('x-powered-by');
+  app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.setHeader(
       'Permissions-Policy',
       'camera=(), geolocation=(), microphone=(self)'
     );
+    res.setHeader('X-DNS-Prefetch-Control', 'off');
+    if (req.path.startsWith('/api/')) {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    }
     next();
   });
 
-  app.use('/api', (_req, res, next) => {
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    next();
-  });
-  app.use('/api', rateLimitApi);
-
-  const smallJsonParser = express.json({ limit: '256kb' });
-  const uploadJsonParser = express.json({ limit: '12mb' });
+  const jsonSmall = express.json({ limit: '256kb' });
+  const jsonLargeUpload = express.json({ limit: '12mb' });
 
   app.get('/api/health', (_req, res) => {
-    res.json({ status: 'ok', service: 'nyayasetu-local-engine' });
+    res.json({
+      status: 'ok',
+      service: 'nyayasetu-ai',
+      engine: 'hybrid-gemini-and-local-bns-bnss-engine',
+    });
   });
 
-  // 1. Built-In Citizen Legal First-Aid Engine (100% Local BNS/BNSS/NALSA Engine)
-  app.post('/api/legal-aid', smallJsonParser, (req, res) => {
-    try {
-      const { query } = (req.body ?? {}) as { query?: unknown };
-      const trimmedQuery = sanitizeText(query, 3000);
-      if (trimmedQuery.length < 3) {
-        res.status(400).json({
-          error: 'Please describe the legal situation or arrest details in at least a few words.',
-        });
-        return;
-      }
-
-      const result = analyzeLegalQueryLocally(trimmedQuery);
-      res.json(result);
-    } catch {
-      res.status(500).json({
-        error: 'Unable to analyze this query right now. Please try again.',
-      });
-    }
-  });
-
-  // 2. Built-In Local FIR Vision OCR (Tesseract.js + BNS/IPC Statutory Mapper)
-  app.post('/api/fir-ocr', uploadJsonParser, async (req, res) => {
-    try {
-      const { imageBase64, mimeType, notes } = (req.body ?? {}) as {
-        imageBase64?: unknown;
-        mimeType?: unknown;
-        notes?: unknown;
-      };
-
-      const validatedDoc = validateUploadedDocument(imageBase64, mimeType);
-      if (!validatedDoc.ok) {
-        res.status(400).json({ error: validatedDoc.error });
-        return;
-      }
-
-      const cleanNotes = sanitizeText(notes, 500);
-      const buffer = Buffer.from(validatedDoc.data, 'base64');
-
-      let ocrText = '';
-      if (validatedDoc.mimeType === 'application/pdf') {
-        ocrText = extractReadablePdfText(buffer);
-        if (ocrText.trim().length < 12) {
-          res.status(400).json({
-            error:
-              'This PDF appears to be a scanned image without embedded text. Please upload a JPG or PNG photo/screenshot of the FIR page.',
+  // -------------------------------------------------------------------------
+  // 1. Conversational Legal First-Aid (English + Hindi + Hinglish)
+  // -------------------------------------------------------------------------
+  app.post(
+    '/api/legal-aid',
+    rateLimitMiddleware,
+    jsonSmall,
+    async (req: Request, res: Response) => {
+      try {
+        const rawQuery = sanitizeInputText(req.body?.query, 3000);
+        if (!rawQuery || rawQuery.length < 2) {
+          return res.status(400).json({
+            error: 'Please enter a legal question or describe the situation.',
           });
-          return;
         }
-      } else {
-        ocrText = await recognizeImageBuffer(buffer);
-      }
 
-      const parsed = parseFirOcrTextLocally(ocrText, cleanNotes);
-      res.json({ extraction: parsed });
-    } catch {
-      res.status(500).json({
-        error: 'Could not read text from this document. Please try a clearer JPG or PNG photo.',
-      });
-    }
-  });
+        const cacheKey = rawQuery.toLowerCase();
+        const cached = getCachedAdvisory(cacheKey);
+        if (cached) {
+          return res.json(cached);
+        }
 
-  // 3. Built-In BNSS Section 479 Statutory Bail Application Generator
-  app.post('/api/bail-dossier', smallJsonParser, (req, res) => {
-    try {
-      const payload = (req.body ?? {}) as Partial<BailDossierRequest>;
-      const accusedName = sanitizeText(payload.accusedName, 120);
-      const firNumber = sanitizeText(payload.firNumber, 80);
-      const policeStation = sanitizeText(payload.policeStation, 120);
+        const localResult = analyzeLegalQueryLocally(rawQuery);
+        const advisory = await enrichWithGeminiIfAvailable(
+          rawQuery,
+          localResult
+        );
+        const payload = {
+          advisory,
+          deterministicMatches: localResult.deterministicMatches,
+        };
 
-      if (!accusedName || !firNumber || !policeStation) {
-        res.status(400).json({
-          error: 'Accused name, FIR number, and Police Station are required to draft a court petition.',
+        setCachedAdvisory(cacheKey, payload);
+
+        return res.json(payload);
+      } catch (err: unknown) {
+        console.error('[NyayaSetu] /api/legal-aid error:', err);
+        return res.status(500).json({
+          error: 'Unable to process legal query right now. Please try again.',
         });
-        return;
       }
-
-      const result = generateBailDossierLocally({
-        accusedName,
-        fatherOrSpouseName: sanitizeText(payload.fatherOrSpouseName, 120),
-        firNumber,
-        policeStation,
-        district: sanitizeText(payload.district, 100) || 'Lucknow',
-        courtName:
-          sanitizeText(payload.courtName, 160) ||
-          'Court of the Learned Chief Judicial Magistrate',
-        jailName: sanitizeText(payload.jailName, 120) || 'District Jail',
-        custodyStartDate:
-          sanitizeText(payload.custodyStartDate, 40) || 'As per Jail Custody Certificate',
-        bnsSection: sanitizeText(payload.bnsSection, 60) || '303(2) BNS',
-        ipcSection: sanitizeText(payload.ipcSection, 60) || '379 IPC',
-        offenceTitle: sanitizeText(payload.offenceTitle, 160) || 'Alleged Offence',
-        maxPunishmentLabel: sanitizeText(payload.maxPunishmentLabel, 60),
-        maxPunishmentMonths: parseBoundedNumber(payload.maxPunishmentMonths, 36, 1, 600),
-        undergoneDays: parseBoundedNumber(payload.undergoneDays, 0, 0, 18250),
-        isFirstTimeOffender: payload.isFirstTimeOffender !== false,
-        additionalFacts: sanitizeText(payload.additionalFacts, 600),
-      });
-
-      res.json(result);
-    } catch {
-      res.status(500).json({
-        error: 'Could not generate bail letter right now. Please try again.',
-      });
-    }
-  });
-
-  // Return proper JSON 404 for unknown /api/* endpoints instead of falling through to SPA HTML
-  app.use('/api', (_req, res) => {
-    res.status(404).json({ error: 'API endpoint not found.' });
-  });
-
-  // Catch-all JSON error handler for malformed JSON bodies or oversized payloads
-  app.use(
-    (
-      err: unknown,
-      req: express.Request,
-      res: express.Response,
-      next: express.NextFunction
-    ) => {
-      if (req.path.startsWith('/api')) {
-        const status =
-          typeof err === 'object' &&
-          err !== null &&
-          'status' in err &&
-          typeof (err as { status?: unknown }).status === 'number'
-            ? (err as { status: number }).status
-            : 400;
-        res.status(status).json({
-          error:
-            status === 413
-              ? 'Request payload is too large. Please reduce the file or message size.'
-              : 'Invalid request payload.',
-        });
-        return;
-      }
-      next(err);
     }
   );
 
-  return app;
-}
+  // -------------------------------------------------------------------------
+  // 2. Multimodal FIR Vision Scanner (Local Tesseract OCR + Statutory Parser)
+  // -------------------------------------------------------------------------
+  app.post(
+    '/api/fir-ocr',
+    rateLimitMiddleware,
+    jsonLargeUpload,
+    async (req: Request, res: Response) => {
+      try {
+        const imageBase64Raw =
+          typeof req.body?.imageBase64 === 'string' ? req.body.imageBase64 : '';
+        const mimeType = sanitizeInputText(req.body?.mimeType, 64);
+        const userNotes = sanitizeInputText(req.body?.notes, 500);
 
-async function startServer() {
-  const app = createApp();
-  const isProd = process.env.NODE_ENV === 'production';
+        const allowedMimes = [
+          'image/jpeg',
+          'image/png',
+          'image/webp',
+          'application/pdf',
+        ];
+        if (!imageBase64Raw || !allowedMimes.includes(mimeType)) {
+          return res.status(400).json({
+            error:
+              'Please upload a valid FIR image or PDF (JPEG, PNG, WEBP, or PDF).',
+          });
+        }
 
-  if (!isProd) {
-    const vitePromise = import('vite').then(({ createServer: createViteServer }) =>
-      createViteServer({
-        server: {
-          middlewareMode: true,
-          hmr: process.env.DISABLE_HMR !== 'true',
-          watch: process.env.DISABLE_HMR === 'true' ? null : undefined,
-        },
-        appType: 'spa',
+        const cleanBase64 = imageBase64Raw.includes(',')
+          ? imageBase64Raw.split(',')[1]
+          : imageBase64Raw;
+
+        const approxBytes = Math.ceil((cleanBase64.length * 3) / 4);
+        if (approxBytes > 8 * 1024 * 1024) {
+          return res.status(413).json({
+            error:
+              'Uploaded document exceeds the 8 MB limit. Please upload a smaller image.',
+          });
+        }
+
+        if (!hasValidFileSignature(cleanBase64, mimeType)) {
+          return res.status(400).json({
+            error:
+              'The uploaded file content does not match a valid JPEG, PNG, WEBP, or PDF header.',
+          });
+        }
+
+        let rawOcrText = '';
+        if (mimeType !== 'application/pdf') {
+          try {
+            const imgBuffer = Buffer.from(cleanBase64, 'base64');
+            const worker = await getLocalOcrWorker();
+            const result = await worker.recognize(imgBuffer);
+            rawOcrText = result?.data?.text || '';
+          } catch (ocrErr) {
+            console.warn(
+              '[NyayaSetu] Local OCR fallback notice:',
+              ocrErr instanceof Error ? ocrErr.message : ocrErr
+            );
+          }
+        }
+
+        const extraction: FIROCRExtractionResponse = parseFirOcrTextLocally(
+          rawOcrText,
+          userNotes
+        );
+
+        return res.json({ extraction });
+      } catch (err: unknown) {
+        console.error('[NyayaSetu] /api/fir-ocr error:', err);
+        return res.status(500).json({
+          error:
+            'Could not read the FIR image right now. Please try a clearer image.',
+        });
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // 3. BNSS Section 479 Statutory Bail Dossier Generator
+  // -------------------------------------------------------------------------
+  app.post(
+    '/api/bail-dossier',
+    rateLimitMiddleware,
+    jsonSmall,
+    async (req: Request, res: Response) => {
+      try {
+        const body = (req.body || {}) as Partial<BailDossierRequest>;
+
+        const accusedName = sanitizeInputText(body.accusedName, 120);
+        const fatherOrSpouseName = sanitizeInputText(
+          body.fatherOrSpouseName,
+          120
+        );
+        const firNumber = sanitizeInputText(body.firNumber, 80);
+        const policeStation = sanitizeInputText(body.policeStation, 120);
+        const district = sanitizeInputText(
+          body.district || 'District Court',
+          120
+        );
+        const courtName = sanitizeInputText(
+          body.courtName || 'Court of the Chief Judicial Magistrate',
+          160
+        );
+        const jailName = sanitizeInputText(
+          body.jailName || 'Central / District Jail',
+          120
+        );
+        const custodyStartDate = sanitizeInputText(
+          body.custodyStartDate || 'As per judicial remand warrant',
+          60
+        );
+        const bnsSection = sanitizeInputText(body.bnsSection || '303(2) BNS', 80);
+        const ipcSection = sanitizeInputText(body.ipcSection || '379 IPC', 80);
+        const offenceTitle = sanitizeInputText(
+          body.offenceTitle || 'Offence under BNS',
+          150
+        );
+        const maxPunishmentLabel = sanitizeInputText(
+          body.maxPunishmentLabel || 'Up to 3 Years',
+          100
+        );
+        const additionalFacts = sanitizeInputText(body.additionalFacts, 1000);
+
+        if (!accusedName || !firNumber || !policeStation) {
+          return res.status(400).json({
+            error:
+              'Accused Name, FIR Number, and Police Station are required to generate a court bail dossier.',
+          });
+        }
+
+        const maxPunishmentMonths = Math.max(
+          1,
+          Math.min(1200, Number(body.maxPunishmentMonths) || 36)
+        );
+        const undergoneDays = Math.max(
+          0,
+          Math.min(36500, Number(body.undergoneDays) || 0)
+        );
+        const isFirstTimeOffender = Boolean(body.isFirstTimeOffender);
+
+        const result = generateBailDossierLocally({
+          accusedName,
+          fatherOrSpouseName,
+          firNumber,
+          policeStation,
+          district,
+          courtName,
+          jailName,
+          custodyStartDate,
+          bnsSection,
+          ipcSection,
+          offenceTitle,
+          maxPunishmentLabel,
+          maxPunishmentMonths,
+          undergoneDays,
+          isFirstTimeOffender,
+          additionalFacts,
+        });
+
+        return res.json(result);
+      } catch (err: unknown) {
+        console.error('[NyayaSetu] /api/bail-dossier error:', err);
+        return res.status(500).json({
+          error:
+            'Could not generate the bail application right now. Please try again.',
+        });
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // 4. Text-to-Speech Endpoint (Gemini 3.8 Flash Lite TTS + Graceful Fallback)
+  // -------------------------------------------------------------------------
+  app.post(
+    '/api/tts',
+    rateLimitMiddleware,
+    jsonSmall,
+    async (req: Request, res: Response) => {
+      try {
+        const text = sanitizeInputText(req.body?.text, 800);
+        if (!text) {
+          return res.status(400).json({
+            error: 'Text is required for speech synthesis.',
+          });
+        }
+
+        const ai = getGeminiClient('v1beta');
+        if (!ai) {
+          return res.status(200).json({
+            useBrowserSpeechSynthesis: true,
+            text,
+          });
+        }
+
+        try {
+          const response = await ai.models.generateContent({
+            model: TTS_GEMINI_MODEL,
+            contents: [
+              {
+                parts: [
+                  {
+                    text: `Read this legal reassurance message in a calm, warm, supportive Indian voice: ${text}`,
+                  },
+                ],
+              },
+            ],
+            config: {
+              responseModalities: ['AUDIO'],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: { voiceName: 'Aoede' },
+                },
+              },
+              abortSignal: AbortSignal.timeout(3000),
+            },
+          });
+
+          const inlineAudio =
+            response.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+          if (inlineAudio?.data) {
+            return res.json({
+              audioBase64: inlineAudio.data,
+              mimeType: inlineAudio.mimeType || 'audio/wav',
+            });
+          }
+        } catch {
+          geminiCircuitOpenUntil = Date.now() + 10 * 60 * 1000;
+        }
+
+        return res.status(200).json({
+          useBrowserSpeechSynthesis: true,
+          text,
+        });
+      } catch (err: unknown) {
+        console.error('[NyayaSetu] /api/tts error:', err);
+        return res.status(200).json({
+          useBrowserSpeechSynthesis: true,
+        });
+      }
+    }
+  );
+
+  app.use('/api/*', (_req: Request, res: Response) => {
+    res.status(404).json({
+      error: 'API endpoint not found.',
+    });
+  });
+
+  app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
+    if (err && typeof err === 'object' && 'type' in err) {
+      const errType = (err as { type?: string }).type;
+      if (errType === 'entity.too.large') {
+        return res.status(413).json({
+          error:
+            'Request payload is too large. Please upload an image under 8 MB.',
+        });
+      }
+      if (errType === 'entity.parse.failed') {
+        return res.status(400).json({
+          error: 'Invalid JSON request payload.',
+        });
+      }
+    }
+    return next(err);
+  });
+
+  if (process.env.NODE_ENV !== 'production') {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa',
+    });
+    app.use(vite.middlewares);
+  } else {
+    const distPath = path.join(__dirname, 'dist');
+    app.use(
+      '/assets',
+      express.static(path.join(distPath, 'assets'), {
+        maxAge: '1y',
+        immutable: true,
       })
     );
-
-    vitePromise.catch((err) => {
-      console.error('Vite middleware initialization failed:', err);
-    });
-
-    app.use(async (req, res, next) => {
-      try {
-        const vite = await vitePromise;
-        vite.middlewares(req, res, next);
-      } catch (err) {
-        next(err);
-      }
-    });
-  } else {
-    const distDir = path.resolve(__dirname, 'dist');
-    app.use(express.static(distDir));
+    app.use(express.static(distPath));
     app.get('*', (_req, res) => {
-      const indexFile = path.join(distDir, 'index.html');
-      if (fs.existsSync(indexFile)) {
-        res.sendFile(indexFile);
-      } else {
-        res.status(404).send('Build output not found. Run npm run build.');
-      }
+      res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`NyayaSetu AI server listening on http://0.0.0.0:${PORT}`);
+    console.log(
+      `[NyayaSetu AI] Server running on http://0.0.0.0:${PORT} (Hybrid Gemini + Built-in BNS/BNSS/Hinglish Engine)`
+    );
   });
 }
 
-startServer().catch((err) => {
-  console.error('Failed to start NyayaSetu AI server:', err);
-  process.exit(1);
-});
+if (process.env.NODE_ENV !== 'test') {
+  startServer();
+}

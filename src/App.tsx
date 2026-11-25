@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState, type KeyboardEvent } from 'react';
 import { FileScan, Mic, Scale } from 'lucide-react';
 import { BailEnginePanel } from './components/BailEnginePanel';
 import { FirScannerPanel } from './components/FirScannerPanel';
@@ -13,6 +13,7 @@ import type {
 } from './types/legal';
 
 type WorkspaceTab = 'first-aid' | 'fir-ocr' | 'bail-engine';
+const TAB_ORDER: WorkspaceTab[] = ['first-aid', 'fir-ocr', 'bail-engine'];
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('first-aid');
@@ -24,35 +25,63 @@ export default function App() {
     null
   );
 
-  const jumpToWorkspace = (tab: WorkspaceTab) => {
+  const jumpToWorkspace = useCallback((tab: WorkspaceTab) => {
     setActiveTab(tab);
     const el = document.getElementById('workspace');
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-  };
+  }, []);
 
-  const handleTransferToBail = (payload: BailTransferPayload) => {
-    setBailTransfer(payload);
-    jumpToWorkspace('bail-engine');
-  };
+  const handleTransferToBail = useCallback(
+    (payload: BailTransferPayload) => {
+      setBailTransfer(payload);
+      jumpToWorkspace('bail-engine');
+    },
+    [jumpToWorkspace]
+  );
 
-  const handleAskAboutSection = (section: StatutorySectionRecord) => {
-    setPrefillFirstAidQuery(
-      `Explain my bail rights for ${section.bnsSection} (${section.ipcSection} - ${section.title}) in simple words.`
-    );
-    jumpToWorkspace('first-aid');
-  };
+  const handleAskAboutSection = useCallback(
+    (section: StatutorySectionRecord) => {
+      setPrefillFirstAidQuery(
+        `Explain my bail rights for ${section.bnsSection} (${section.ipcSection} - ${section.title}) in simple words.`
+      );
+      jumpToWorkspace('first-aid');
+    },
+    [jumpToWorkspace]
+  );
+
+  const handleTabKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLDivElement>) => {
+      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+      e.preventDefault();
+      const idx = TAB_ORDER.indexOf(activeTab);
+      const nextIdx =
+        e.key === 'ArrowRight'
+          ? (idx + 1) % TAB_ORDER.length
+          : (idx - 1 + TAB_ORDER.length) % TAB_ORDER.length;
+      const nextTab = TAB_ORDER[nextIdx];
+      setActiveTab(nextTab);
+      document.getElementById(`tab-${nextTab}`)?.focus();
+    },
+    [activeTab]
+  );
 
   return (
     <div className="min-h-screen bg-[#FFFFEB] text-[#1A1A1A] flex flex-col">
+      <a
+        href="#workspace"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:rounded-xl focus:border-2 focus:border-[#1A1A1A] focus:bg-[#F0D7FF] focus:px-4 focus:py-2 focus:text-sm focus:font-bold focus:text-[#1A1A1A] focus:shadow-[3px_3px_0_#1A1A1A]"
+      >
+        Skip to main legal tools
+      </a>
       <Navbar
         activeTab={activeTab}
         onNavigateTab={setActiveTab}
         onOpenNalsa={() => setNalsaModalOpen(true)}
       />
 
-      <main className="flex-1">
+      <main id="main-content" className="flex-1">
         <HeroSection
           onLaunchFirstAid={() => jumpToWorkspace('first-aid')}
           onLaunchScanner={() => jumpToWorkspace('fir-ocr')}
@@ -61,11 +90,15 @@ export default function App() {
         {/* Core 3-Tool Workspace */}
         <section
           id="workspace"
+          aria-labelledby="workspace-heading"
           className="scroll-mt-20 mx-auto max-w-[1280px] px-5 py-14 sm:px-8 sm:py-16 lg:px-12 lg:py-20"
         >
           <div className="no-print space-y-6 border-b border-[#E4E4D0] pb-8">
             <div className="flex flex-col gap-1.5 sm:flex-row sm:items-end sm:justify-between">
-              <h2 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-[#1A1A1A]">
+              <h2
+                id="workspace-heading"
+                className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-[#1A1A1A]"
+              >
                 How can we help{' '}
                 <span className="font-editorial-italic">today?</span>
               </h2>
@@ -77,6 +110,7 @@ export default function App() {
             <div
               role="tablist"
               aria-label="Legal help tools"
+              onKeyDown={handleTabKeyDown}
               className="grid grid-cols-1 gap-3.5 sm:grid-cols-3"
             >
               <button

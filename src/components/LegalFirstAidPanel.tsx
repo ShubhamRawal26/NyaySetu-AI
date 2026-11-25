@@ -299,6 +299,8 @@ export const LegalFirstAidPanel: React.FC<LegalFirstAidPanelProps> = ({
               type="button"
               onClick={toggleVoiceInput}
               disabled={!speechSupported}
+              aria-pressed={isListening}
+              aria-label={isListening ? 'Stop voice input' : 'Speak your legal question'}
               className={`inline-flex min-h-[42px] items-center gap-2 px-4 py-2 text-xs sm:text-sm font-semibold rounded-xl border-2 border-[#1A1A1A] transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed ${
                 isListening
                   ? 'bg-[#FFA946] text-[#1A1A1A]'
@@ -380,7 +382,7 @@ export const LegalFirstAidPanel: React.FC<LegalFirstAidPanelProps> = ({
       </div>
 
       {/* Right Clear Answer Panel */}
-      <div className="lg:col-span-7 flex flex-col">
+      <div className="lg:col-span-7 flex flex-col" aria-live="polite">
         {loading ? (
           <div className="flex flex-1 flex-col justify-center rounded-[24px] border-2 border-[#1A1A1A] bg-[#1A1A1A] text-[#FFFFEB] p-6 sm:p-8 space-y-5 shadow-[4px_4px_0_#034F46]">
             <div className="flex items-center gap-3 text-sm font-medium text-[#F0D7FF]">
@@ -490,6 +492,8 @@ export const LegalFirstAidPanel: React.FC<LegalFirstAidPanelProps> = ({
                   <button
                     type="button"
                     onClick={handlePlayAudio}
+                    aria-pressed={ttsPlaying}
+                    aria-label={ttsPlaying ? 'Stop reading answer aloud' : 'Listen to answer aloud'}
                     className="inline-flex h-9 items-center gap-1.5 px-3.5 text-xs font-semibold text-[#1A1A1A] bg-[#F0D7FF] hover:bg-[#FFFFEB] rounded-xl transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                   >
                     {ttsPlaying ? (
